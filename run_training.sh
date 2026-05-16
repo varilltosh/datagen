@@ -13,8 +13,8 @@ python3 train_with_tuning.py \
   --data /home/skuba/skuba_ws/src/skuba_vision_project/datagen/website/data/sythesized_data.yaml \
   --project /home/skuba/skuba_ws/src/skuba_vision_project/datagen/evaluation \
   --batch 16 \
-  --epochs 200 \
-  --patience 20 \
+  --epochs 150 \
+  --patience 10 \
   --tune-epochs 10 \
   --tune-iterations 30 \
   --device 0 \
