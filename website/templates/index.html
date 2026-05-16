@@ -1,0 +1,884 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Video Dataset Processor</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f6f7f9;
+      color: #1f2933;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+    }
+
+    main {
+      width: min(980px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 32px 0;
+    }
+
+    header {
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(28px, 4vw, 42px);
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0;
+      color: #52606d;
+      line-height: 1.55;
+    }
+
+    .panel {
+      background: #ffffff;
+      border: 1px solid #d9e2ec;
+      border-radius: 8px;
+      padding: 22px;
+      box-shadow: 0 1px 2px rgba(31, 41, 51, 0.05);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 220px;
+      gap: 16px;
+      align-items: end;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 700;
+      color: #323f4b;
+    }
+
+    input[type="file"],
+    input[type="number"] {
+      width: 100%;
+      min-height: 44px;
+      border: 1px solid #bcccdc;
+      border-radius: 6px;
+      padding: 10px 12px;
+      background: #ffffff;
+      color: #1f2933;
+      font: inherit;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    button {
+      min-height: 42px;
+      border: 0;
+      border-radius: 6px;
+      padding: 0 16px;
+      background: #147d64;
+      color: #ffffff;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button.secondary {
+      background: #486581;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    .progress-wrap {
+      margin-top: 22px;
+      border-top: 1px solid #e4e7eb;
+      padding-top: 18px;
+    }
+
+    .progress-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 8px;
+      font-weight: 700;
+    }
+
+    .bar {
+      height: 18px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #d9e2ec;
+    }
+
+    .fill {
+      height: 100%;
+      width: 0%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #147d64, #38a169);
+      transition: width 180ms ease;
+    }
+
+    .status {
+      margin-top: 10px;
+      min-height: 24px;
+      color: #323f4b;
+    }
+
+    pre {
+      max-height: 320px;
+      overflow: auto;
+      margin: 18px 0 0;
+      padding: 14px;
+      border-radius: 6px;
+      background: #1f2933;
+      color: #f5f7fa;
+      font-size: 13px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+
+    .paths {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      color: #52606d;
+      font-size: 14px;
+    }
+
+    .path {
+      padding: 10px;
+      border: 1px solid #e4e7eb;
+      border-radius: 6px;
+      overflow-wrap: anywhere;
+      background: #f8fafc;
+    }
+
+    .tool-panel {
+      margin-top: 18px;
+      border-top: 1px solid #e4e7eb;
+      padding-top: 18px;
+    }
+
+    .bbox-wrap {
+      position: relative;
+      margin-top: 12px;
+      width: 100%;
+      max-height: 520px;
+      overflow: auto;
+      border: 1px solid #bcccdc;
+      border-radius: 6px;
+      background: #111827;
+    }
+
+    .bbox-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .calibration-card {
+      border: 1px solid #d9e2ec;
+      border-radius: 8px;
+      padding: 12px;
+      background: #ffffff;
+    }
+
+    .bbox-title {
+      margin: 0 0 8px;
+      font-weight: 700;
+      color: #323f4b;
+    }
+
+    canvas {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      cursor: crosshair;
+    }
+
+    select,
+    input[type="text"] {
+      width: 100%;
+      min-height: 44px;
+      border: 1px solid #bcccdc;
+      border-radius: 6px;
+      padding: 10px 12px;
+      background: #ffffff;
+      color: #1f2933;
+      font: inherit;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+      font-size: 14px;
+    }
+
+    .calibration-grid {
+      margin-top: 12px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      align-items: end;
+    }
+
+    .stat {
+      padding: 10px;
+      border: 1px solid #e4e7eb;
+      border-radius: 6px;
+      background: #f8fafc;
+      overflow-wrap: anywhere;
+    }
+
+    @media (max-width: 720px) {
+      .grid,
+      .bbox-grid,
+      .calibration-grid,
+      .paths,
+      .stats {
+        grid-template-columns: 1fr;
+      }
+
+      main {
+        width: min(100% - 20px, 980px);
+        padding: 18px 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Video Dataset Processor</h1>
+      <p>Upload a folder of videos, extract a fixed number of frames per video, remove backgrounds, and synthesize YOLO training data.</p>
+    </header>
+
+    <section class="panel">
+      <form id="uploadForm">
+        <div class="grid">
+          <div>
+            <label for="videos">Video folder</label>
+            <input id="videos" name="videos" type="file" accept="video/*,.mov,.MOV" webkitdirectory directory multiple>
+          </div>
+          <div>
+            <label for="imagesPerVideo">Images per video</label>
+            <input id="imagesPerVideo" name="images_per_video" type="number" min="1" step="1" value="108">
+          </div>
+        </div>
+        <div class="grid synth-grid">
+          <div>
+            <label for="totalImages">Synthesized images</label>
+            <input id="totalImages" name="total_images" type="number" min="1" step="1" value="100">
+          </div>
+          <div></div>
+        </div>
+        <div class="actions">
+          <button id="uploadButton" type="submit">Upload Folder</button>
+          <button id="startButton" type="button" class="secondary">Process Videos</button>
+          <button id="synthesizeButton" type="button" class="secondary">Synthesize</button>
+          <button id="clearButton" type="button" class="secondary">Clear</button>
+        </div>
+      </form>
+
+      <div class="progress-wrap">
+        <div class="progress-meta">
+          <span id="stage">Idle</span>
+          <span id="percent">0%</span>
+        </div>
+        <div class="bar" aria-label="Processing progress">
+          <div id="fill" class="fill"></div>
+        </div>
+        <div id="status" class="status">Upload a folder of videos to begin.</div>
+        <pre id="log"></pre>
+      </div>
+
+      <div class="tool-panel">
+        <div class="grid">
+          <div></div>
+          <div>
+            <label for="classSelect">Class</label>
+            <select id="classSelect"></select>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="saveProfileButton" type="button" class="secondary">Save Box Profile</button>
+          <button id="setCloseButton" type="button" class="secondary">Set Close</button>
+          <button id="setFarButton" type="button" class="secondary">Set Far</button>
+          <button id="clearBoxButton" type="button" class="secondary">Clear Box</button>
+        </div>
+        <div class="bbox-grid">
+          <div class="calibration-card">
+            <p class="bbox-title">Close image bbox</p>
+            <label for="closeImage">Close distance image</label>
+            <input id="closeImage" type="file" accept="image/*">
+            <label for="closeDistance">Close distance (cm)</label>
+            <input id="closeDistance" type="number" min="1" step="0.1" placeholder="e.g. 20">
+            <div class="bbox-wrap">
+              <canvas id="closeCanvas" width="480" height="270"></canvas>
+            </div>
+          </div>
+          <div class="calibration-card">
+            <p class="bbox-title">Far image bbox</p>
+            <label for="farImage">Far distance image</label>
+            <input id="farImage" type="file" accept="image/*">
+            <label for="farDistance">Far distance (cm)</label>
+            <input id="farDistance" type="number" min="1" step="0.1" placeholder="e.g. 80">
+            <div class="bbox-wrap">
+              <canvas id="farCanvas" width="480" height="270"></canvas>
+            </div>
+          </div>
+        </div>
+        <div class="calibration-grid">
+          <div>
+            <label for="wantedDistanceMin">Wanted distance min (cm)</label>
+            <input id="wantedDistanceMin" type="number" min="1" step="0.1" placeholder="e.g. 40">
+          </div>
+          <div>
+            <label for="wantedDistanceMax">Wanted distance max (cm)</label>
+            <input id="wantedDistanceMax" type="number" min="1" step="0.1" placeholder="e.g. 60">
+          </div>
+        </div>
+        <div class="stats">
+          <div class="stat">Box: <span id="boxStats">none</span></div>
+          <div class="stat">Brightness: <span id="brightnessValue">0</span></div>
+          <div class="stat">Close: <span id="closeStats">none</span></div>
+          <div class="stat">Far: <span id="farStats">none</span></div>
+          <div class="stat">Wanted size: <span id="wantedStats">none</span></div>
+        </div>
+      </div>
+
+      <div class="paths">
+        <div class="path">Videos: /home/skuba/skuba_ws/src/skuba_vision_project/datagen/website/dataset_video</div>
+        <div class="path">Frames: /home/skuba/skuba_ws/src/skuba_vision_project/datagen/website/dataset_image</div>
+        <div class="path">Removed background: /home/skuba/skuba_ws/src/skuba_vision_project/datagen/website/dataset_rembg</div>
+        <div class="path">Masks: /home/skuba/skuba_ws/src/skuba_vision_project/datagen/website/dataset_mask</div>
+        <div class="path">Synthesized images: /home/skuba/skuba_ws/src/skuba_vision_project/datagen/website/data/sythesized_data</div>
+        <div class="path">YOLO labels: /home/skuba/skuba_ws/src/skuba_vision_project/datagen/website/data/labels</div>
+        <div class="path">YOLO YAML: /home/skuba/skuba_ws/src/skuba_vision_project/datagen/website/data/sythesized_data.yaml</div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const uploadForm = document.getElementById("uploadForm");
+    const uploadButton = document.getElementById("uploadButton");
+    const startButton = document.getElementById("startButton");
+    const synthesizeButton = document.getElementById("synthesizeButton");
+    const clearButton = document.getElementById("clearButton");
+    const videosInput = document.getElementById("videos");
+    const imagesPerVideoInput = document.getElementById("imagesPerVideo");
+    const totalImagesInput = document.getElementById("totalImages");
+    const closeImageInput = document.getElementById("closeImage");
+    const farImageInput = document.getElementById("farImage");
+    const classSelect = document.getElementById("classSelect");
+    const saveProfileButton = document.getElementById("saveProfileButton");
+    const setCloseButton = document.getElementById("setCloseButton");
+    const setFarButton = document.getElementById("setFarButton");
+    const clearBoxButton = document.getElementById("clearBoxButton");
+    const closeDistanceInput = document.getElementById("closeDistance");
+    const farDistanceInput = document.getElementById("farDistance");
+    const wantedDistanceMinInput = document.getElementById("wantedDistanceMin");
+    const wantedDistanceMaxInput = document.getElementById("wantedDistanceMax");
+    const closeCanvas = document.getElementById("closeCanvas");
+    const farCanvas = document.getElementById("farCanvas");
+    const boxStatsEl = document.getElementById("boxStats");
+    const brightnessValueEl = document.getElementById("brightnessValue");
+    const closeStatsEl = document.getElementById("closeStats");
+    const farStatsEl = document.getElementById("farStats");
+    const wantedStatsEl = document.getElementById("wantedStats");
+    const stageEl = document.getElementById("stage");
+    const percentEl = document.getElementById("percent");
+    const fillEl = document.getElementById("fill");
+    const statusEl = document.getElementById("status");
+    const logEl = document.getElementById("log");
+    let brightnessValue = 0;
+    let closeSample = null;
+    let farSample = null;
+    const profileTargetSize = 640;
+    const statsCanvas = document.createElement("canvas");
+    const statsCtx = statsCanvas.getContext("2d", { willReadFrequently: true });
+    const calibrationViews = {
+      close: {
+        canvas: closeCanvas,
+        ctx: closeCanvas.getContext("2d", { willReadFrequently: true }),
+        image: null,
+        displayScale: 1,
+        activeBox: null,
+        draftBox: null,
+        isDrawing: false,
+        brightness: 0,
+      },
+      far: {
+        canvas: farCanvas,
+        ctx: farCanvas.getContext("2d", { willReadFrequently: true }),
+        image: null,
+        displayScale: 1,
+        activeBox: null,
+        draftBox: null,
+        isDrawing: false,
+        brightness: 0,
+      },
+    };
+
+    function setBusy(isBusy) {
+      uploadButton.disabled = isBusy;
+      startButton.disabled = isBusy;
+      synthesizeButton.disabled = isBusy;
+      clearButton.disabled = isBusy;
+      videosInput.disabled = isBusy;
+      imagesPerVideoInput.disabled = isBusy;
+      totalImagesInput.disabled = isBusy;
+      closeImageInput.disabled = isBusy;
+      farImageInput.disabled = isBusy;
+      classSelect.disabled = isBusy;
+      saveProfileButton.disabled = isBusy;
+      setCloseButton.disabled = isBusy;
+      setFarButton.disabled = isBusy;
+      clearBoxButton.disabled = isBusy;
+      closeDistanceInput.disabled = isBusy;
+      farDistanceInput.disabled = isBusy;
+      wantedDistanceMinInput.disabled = isBusy;
+      wantedDistanceMaxInput.disabled = isBusy;
+    }
+
+    function renderProgress(data) {
+      const percent = Math.max(0, Math.min(100, Number(data.percent || 0)));
+      stageEl.textContent = data.stage || "Idle";
+      percentEl.textContent = `${percent}%`;
+      fillEl.style.width = `${percent}%`;
+      statusEl.textContent = data.message || "";
+      logEl.textContent = (data.log || []).join("\n");
+      setBusy(Boolean(data.running));
+      if (data.error) {
+        statusEl.textContent = data.error;
+      }
+    }
+
+    async function postForm(url, formData) {
+      const response = await fetch(url, { method: "POST", body: formData });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Request failed");
+      }
+      return data;
+    }
+
+    async function postJson(url, payload) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Request failed");
+      }
+      return data;
+    }
+
+    async function refreshClasses() {
+      const response = await fetch("/classes");
+      const data = await response.json();
+      const classes = data.classes || [];
+      classSelect.innerHTML = "";
+      for (const name of classes) {
+        const option = document.createElement("option");
+        option.value = name;
+        option.textContent = name;
+        classSelect.appendChild(option);
+      }
+    }
+
+    function canvasPoint(event, view) {
+      const rect = view.canvas.getBoundingClientRect();
+      return {
+        x: Math.round((event.clientX - rect.left) * (view.canvas.width / rect.width)),
+        y: Math.round((event.clientY - rect.top) * (view.canvas.height / rect.height)),
+      };
+    }
+
+    function normalizedBox(start, end, view) {
+      const x = Math.max(0, Math.min(start.x, end.x));
+      const y = Math.max(0, Math.min(start.y, end.y));
+      const right = Math.min(view.canvas.width, Math.max(start.x, end.x));
+      const bottom = Math.min(view.canvas.height, Math.max(start.y, end.y));
+      return { x, y, width: Math.max(0, right - x), height: Math.max(0, bottom - y) };
+    }
+
+    function drawCanvas(view) {
+      view.ctx.clearRect(0, 0, view.canvas.width, view.canvas.height);
+      if (view.image) {
+        view.ctx.drawImage(view.image, 0, 0, view.canvas.width, view.canvas.height);
+      } else {
+        view.ctx.fillStyle = "#111827";
+        view.ctx.fillRect(0, 0, view.canvas.width, view.canvas.height);
+      }
+      const box = view.draftBox || view.activeBox;
+      if (box && box.width > 0 && box.height > 0) {
+        view.ctx.lineWidth = Math.max(2, Math.round(2 * view.displayScale));
+        view.ctx.strokeStyle = "#22c55e";
+        view.ctx.strokeRect(box.x, box.y, box.width, box.height);
+      }
+    }
+
+    function updateViewStats(view) {
+      const box = view.activeBox;
+      if (!box || box.width < 2 || box.height < 2 || !view.image) {
+        view.brightness = 0;
+        return null;
+      }
+      statsCanvas.width = view.canvas.width;
+      statsCanvas.height = view.canvas.height;
+      statsCtx.drawImage(view.image, 0, 0, statsCanvas.width, statsCanvas.height);
+      const imageData = statsCtx.getImageData(box.x, box.y, box.width, box.height).data;
+      let vTotal = 0;
+      const count = Math.max(1, imageData.length / 4);
+      for (let index = 0; index < imageData.length; index += 4) {
+        vTotal += Math.max(imageData[index], imageData[index + 1], imageData[index + 2]) / 255;
+      }
+      view.brightness = vTotal / count;
+      return boxToTargetSize(box, view);
+    }
+
+    function updateStats() {
+      const closeBox = updateViewStats(calibrationViews.close);
+      const farBox = updateViewStats(calibrationViews.far);
+      const activeBoxText = [
+        closeBox ? `close ${closeBox.width} x ${closeBox.height}px` : null,
+        farBox ? `far ${farBox.width} x ${farBox.height}px` : null,
+      ].filter(Boolean).join(", ");
+      boxStatsEl.textContent = activeBoxText || "none";
+      const brightnessParts = [
+        closeBox ? `close ${calibrationViews.close.brightness.toFixed(4)}` : null,
+        farBox ? `far ${calibrationViews.far.brightness.toFixed(4)}` : null,
+      ].filter(Boolean).join(", ");
+      brightnessValue = [calibrationViews.close.brightness, calibrationViews.far.brightness]
+        .filter((value) => value > 0)
+        .reduce((total, value, _index, values) => total + value / values.length, 0);
+      brightnessValueEl.textContent = brightnessParts || "0";
+      updateCalibrationStats();
+    }
+
+    function boxToTargetSize(box, view) {
+      return {
+        x: Math.round((box.x / view.canvas.width) * profileTargetSize),
+        y: Math.round((box.y / view.canvas.height) * profileTargetSize),
+        width: Math.round((box.width / view.canvas.width) * profileTargetSize),
+        height: Math.round((box.height / view.canvas.height) * profileTargetSize),
+      };
+    }
+
+    function readDistance(input, label) {
+      const value = Number(input.value);
+      if (!Number.isFinite(value) || value <= 0) {
+        throw new Error(`Enter a valid ${label} distance in cm.`);
+      }
+      return value;
+    }
+
+    function captureDistanceSample(input, label) {
+      const view = calibrationViews[label];
+      if (!view.image) {
+        throw new Error(`Load the ${label} distance image first.`);
+      }
+      if (!view.activeBox || view.activeBox.width < 2 || view.activeBox.height < 2) {
+        throw new Error(`Draw the ${label} bounding box first.`);
+      }
+      const box = boxToTargetSize(view.activeBox, view);
+      return {
+        distance_cm: readDistance(input, label),
+        width: box.width,
+        height: box.height,
+        brightness: view.brightness,
+        source_width: view.image.naturalWidth,
+        source_height: view.image.naturalHeight,
+        bbox_x: box.x,
+        bbox_y: box.y,
+      };
+    }
+
+    function sampleText(sample) {
+      if (!sample) return "none";
+      return `${sample.width} x ${sample.height}px at ${sample.distance_cm}cm`;
+    }
+
+    function interpolatePixelSize(close, far, wantedDistance) {
+      const closeInverse = 1 / close.distance_cm;
+      const farInverse = 1 / far.distance_cm;
+      const wantedInverse = 1 / wantedDistance;
+      if (Math.abs(closeInverse - farInverse) < 1e-9) {
+        throw new Error("Close and far distances must be different.");
+      }
+      const solve = (closePixels, farPixels) => {
+        const slope = (closePixels - farPixels) / (closeInverse - farInverse);
+        const intercept = closePixels - slope * closeInverse;
+        return Math.max(2, Math.min(profileTargetSize, Math.round(slope * wantedInverse + intercept)));
+      };
+      return {
+        width: solve(close.width, far.width),
+        height: solve(close.height, far.height),
+      };
+    }
+
+    function readWantedRange() {
+      const minDistance = readDistance(wantedDistanceMinInput, "wanted min");
+      const maxDistance = readDistance(wantedDistanceMaxInput, "wanted max");
+      if (minDistance > maxDistance) {
+        throw new Error("Wanted min distance must be less than or equal to wanted max distance.");
+      }
+      return { minDistance, maxDistance };
+    }
+
+    function computedWantedRange() {
+      if (!closeSample || !farSample) return null;
+      const { minDistance, maxDistance } = readWantedRange();
+      const minSize = interpolatePixelSize(closeSample, farSample, maxDistance);
+      const maxSize = interpolatePixelSize(closeSample, farSample, minDistance);
+      return {
+        min_distance_cm: minDistance,
+        max_distance_cm: maxDistance,
+        min_width: minSize.width,
+        min_height: minSize.height,
+        max_width: maxSize.width,
+        max_height: maxSize.height,
+        width: Math.round((minSize.width + maxSize.width) / 2),
+        height: Math.round((minSize.height + maxSize.height) / 2),
+      };
+    }
+
+    function updateCalibrationStats() {
+      closeStatsEl.textContent = sampleText(closeSample);
+      farStatsEl.textContent = sampleText(farSample);
+      try {
+        const wanted = computedWantedRange();
+        wantedStatsEl.textContent = wanted
+          ? `${wanted.min_width}-${wanted.max_width} x ${wanted.min_height}-${wanted.max_height}px at ${wanted.min_distance_cm}-${wanted.max_distance_cm}cm`
+          : "none";
+      } catch {
+        wantedStatsEl.textContent = "none";
+      }
+    }
+
+    uploadForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!videosInput.files.length) {
+        statusEl.textContent = "Choose a folder containing videos.";
+        return;
+      }
+      const formData = new FormData();
+      for (const file of videosInput.files) {
+        formData.append("videos", file, file.webkitRelativePath || file.name);
+      }
+      try {
+        setBusy(true);
+        statusEl.textContent = "Uploading videos...";
+        await postForm("/upload", formData);
+        await refreshProgress();
+      } catch (error) {
+        statusEl.textContent = error.message;
+      } finally {
+        setBusy(false);
+      }
+    });
+
+    startButton.addEventListener("click", async () => {
+      try {
+        const formData = new FormData();
+        formData.append("images_per_video", imagesPerVideoInput.value || "108");
+        await postForm("/start", formData);
+        await refreshProgress();
+      } catch (error) {
+        statusEl.textContent = error.message;
+      }
+    });
+
+    synthesizeButton.addEventListener("click", async () => {
+      try {
+        const formData = new FormData();
+        formData.append("total_images", totalImagesInput.value || "100");
+        await postForm("/synthesize", formData);
+        await refreshProgress();
+      } catch (error) {
+        statusEl.textContent = error.message;
+      }
+    });
+
+    function loadCalibrationImage(input, role) {
+      const file = input.files[0];
+      if (!file) return;
+      const view = calibrationViews[role];
+      const image = new Image();
+      image.onload = () => {
+        view.image = image;
+        const maxWidth = 960;
+        view.displayScale = Math.min(1, maxWidth / image.naturalWidth);
+        view.canvas.width = Math.max(1, Math.round(image.naturalWidth * view.displayScale));
+        view.canvas.height = Math.max(1, Math.round(image.naturalHeight * view.displayScale));
+        view.activeBox = null;
+        view.draftBox = null;
+        view.brightness = 0;
+        if (role === "close") {
+          closeSample = null;
+        } else {
+          farSample = null;
+        }
+        drawCanvas(view);
+        updateStats();
+        URL.revokeObjectURL(image.src);
+      };
+      image.src = URL.createObjectURL(file);
+    }
+
+    closeImageInput.addEventListener("change", () => loadCalibrationImage(closeImageInput, "close"));
+    farImageInput.addEventListener("change", () => loadCalibrationImage(farImageInput, "far"));
+
+    function bindCanvas(view) {
+      view.canvas.addEventListener("pointerdown", (event) => {
+        if (!view.image) return;
+        view.isDrawing = true;
+        view.canvas.setPointerCapture(event.pointerId);
+        const point = canvasPoint(event, view);
+        view.draftBox = { start: point, end: point };
+      });
+
+      view.canvas.addEventListener("pointermove", (event) => {
+        if (!view.isDrawing || !view.draftBox) return;
+        view.draftBox.end = canvasPoint(event, view);
+        const box = normalizedBox(view.draftBox.start, view.draftBox.end, view);
+        view.draftBox = { ...view.draftBox, ...box };
+        drawCanvas(view);
+      });
+
+      view.canvas.addEventListener("pointerup", (event) => {
+        if (!view.isDrawing || !view.draftBox) return;
+        view.isDrawing = false;
+        view.draftBox.end = canvasPoint(event, view);
+        view.activeBox = normalizedBox(view.draftBox.start, view.draftBox.end, view);
+        view.draftBox = null;
+        drawCanvas(view);
+        updateStats();
+      });
+    }
+
+    bindCanvas(calibrationViews.close);
+    bindCanvas(calibrationViews.far);
+    drawCanvas(calibrationViews.close);
+    drawCanvas(calibrationViews.far);
+
+    clearBoxButton.addEventListener("click", () => {
+      for (const view of Object.values(calibrationViews)) {
+        view.activeBox = null;
+        view.draftBox = null;
+        view.brightness = 0;
+        drawCanvas(view);
+      }
+      closeSample = null;
+      farSample = null;
+      updateStats();
+    });
+
+    setCloseButton.addEventListener("click", () => {
+      try {
+        closeSample = captureDistanceSample(closeDistanceInput, "close");
+        updateCalibrationStats();
+      } catch (error) {
+        statusEl.textContent = error.message;
+      }
+    });
+
+    setFarButton.addEventListener("click", () => {
+      try {
+        farSample = captureDistanceSample(farDistanceInput, "far");
+        updateCalibrationStats();
+      } catch (error) {
+        statusEl.textContent = error.message;
+      }
+    });
+
+    wantedDistanceMinInput.addEventListener("input", updateCalibrationStats);
+    wantedDistanceMaxInput.addEventListener("input", updateCalibrationStats);
+
+    saveProfileButton.addEventListener("click", async () => {
+      try {
+        if (!classSelect.value) {
+          throw new Error("Select a class first.");
+        }
+        if (!closeSample || !farSample) {
+          throw new Error("Set both close and far calibration samples first.");
+        }
+        const wantedSize = computedWantedRange();
+        const brightness = (closeSample.brightness + farSample.brightness) / 2;
+        const data = await postJson("/object-profile", {
+          class_name: classSelect.value,
+          width: wantedSize.width,
+          height: wantedSize.height,
+          min_width: wantedSize.min_width,
+          max_width: wantedSize.max_width,
+          min_height: wantedSize.min_height,
+          max_height: wantedSize.max_height,
+          source_width: closeSample.source_width,
+          source_height: closeSample.source_height,
+          target_width: profileTargetSize,
+          target_height: profileTargetSize,
+          bbox_x: closeSample.bbox_x,
+          bbox_y: closeSample.bbox_y,
+          close_sample: closeSample,
+          far_sample: farSample,
+          wanted_distance_cm: (wantedSize.min_distance_cm + wantedSize.max_distance_cm) / 2,
+          min_distance_cm: wantedSize.min_distance_cm,
+          max_distance_cm: wantedSize.max_distance_cm,
+          brightness,
+        });
+        statusEl.textContent = `Saved ${data.class_name}: ${wantedSize.min_width}-${wantedSize.max_width} x ${wantedSize.min_height}-${wantedSize.max_height}px @ ${profileTargetSize}x${profileTargetSize}`;
+        await refreshProgress();
+      } catch (error) {
+        statusEl.textContent = error.message;
+      }
+    });
+
+    clearButton.addEventListener("click", async () => {
+      try {
+        await postForm("/clear", new FormData());
+        await refreshProgress();
+      } catch (error) {
+        statusEl.textContent = error.message;
+      }
+    });
+
+    async function refreshProgress() {
+      const response = await fetch("/progress");
+      renderProgress(await response.json());
+    }
+
+    const events = new EventSource("/events");
+    events.onmessage = (event) => renderProgress(JSON.parse(event.data));
+    events.onerror = () => {
+      setTimeout(refreshProgress, 500);
+    };
+    setInterval(refreshProgress, 1000);
+    refreshClasses();
+    refreshProgress();
+  </script>
+</body>
+</html>

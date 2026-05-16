@@ -1,0 +1,8 @@
+path: /home/skuba/skuba_ws/src/skuba_vision_project/datagen/website/data
+train: images/train
+val: images/validate
+nc: 3
+names:
+  0: frog
+  1: lego
+  2: mama
