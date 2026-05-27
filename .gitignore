@@ -1,0 +1,49 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# ── Pipeline workspace (generated at runtime) ─────────────────────────────────
+workspace/frames/*
+workspace/masks/*
+workspace/cutouts/*
+workspace/input/*
+workspace/data/sythesized_data/
+workspace/data/images/
+workspace/data/labels/
+workspace/data/phase1/*/
+workspace/data/phase4/
+workspace/data/sythesized_data.yaml
+workspace/data/object_profiles.json
+workspace/data/generation_report.json
+!workspace/**/.gitkeep
+
+# ── YOLO training output ──────────────────────────────────────────────────────
+runs/
+!runs/.gitkeep
+
+# ── Model weights (large binaries — download separately) ──────────────────────
+models/*.pt
+models/*.pth
+models/*.onnx
+
+# ── OS / editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+*.code-workspace
+
+# ── Logs / temp ───────────────────────────────────────────────────────────────
+*.log
+*.tmp

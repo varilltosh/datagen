@@ -1,0 +1,45 @@
+phase0:
+  frame_count_tolerance_pct: 20
+  images_per_video: 108
+  ssim_dedup_threshold: 0.97
+  target_frame_count: 108
+phase1:
+  expected_images_per_class: 108
+  min_backgrounds_per_category: 15
+phase2:
+  blur_max_pct: 15
+  brightness_variation_pct: 10
+  contrast_variation_pct: 20
+  grid_cols: 3
+  grid_rows: 3
+  max_objects_per_image: 15
+  out_of_frame_pct: 10
+  output_resolution:
+  - '640'
+  - '640'
+  overlap_threshold_pct: 20
+  placement_mode: random
+  start_idx: 0
+  test_pct: 5
+  train_pct: 80
+  val_pct: 15
+phase3:
+  batch: 4
+  cls_loss_acceptable: 1
+  cls_loss_excellent: 0.01
+  device: '0'
+  epochs: 3
+  imgsz: 640
+  model: models/yolov8s.pt
+  name: train
+  patience: 20
+  project: runs/detect
+  tune_epochs: 0
+  tune_iterations: 0
+phase4:
+  accepted_formats:
+  - mp4
+  - avi
+  - mov
+  confidence_threshold: 0.75
+  sample_fps: 1

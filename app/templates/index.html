@@ -1,0 +1,2627 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Video Dataset Processor</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f6f7f9;
+      color: #1f2933;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+    }
+
+    /* ── Layout ─────────────────────────────── */
+    .app-layout {
+      display: flex;
+      min-height: 100vh;
+    }
+
+    /* ── Sidebar ─────────────────────────────── */
+    .sidebar {
+      width: 190px;
+      min-height: 100vh;
+      background: #1f2933;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+    }
+
+    .sidebar-brand {
+      padding: 22px 18px 14px;
+      font-size: 17px;
+      font-weight: 800;
+      color: #ffffff;
+      letter-spacing: 0.3px;
+      border-bottom: 1px solid rgba(255,255,255,0.09);
+      line-height: 1.2;
+    }
+
+    .sidebar-brand small {
+      display: block;
+      font-size: 11px;
+      font-weight: 400;
+      color: #7b8794;
+      letter-spacing: 0;
+      margin-top: 2px;
+    }
+
+    .sidebar-nav {
+      padding: 10px 0;
+      flex: 1;
+    }
+
+    .tab-btn {
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+      padding: 10px 18px;
+      text-align: left;
+      background: transparent;
+      color: #9aa5b4;
+      border: none;
+      border-radius: 0;
+      cursor: pointer;
+      min-height: unset;
+      font-weight: 600;
+      transition: background 130ms, color 130ms;
+      gap: 1px;
+    }
+
+    .tab-btn:hover:not(.active) {
+      background: rgba(255,255,255,0.07);
+      color: #cbd2d9;
+    }
+
+    .tab-btn.active {
+      background: #147d64;
+      color: #ffffff;
+    }
+
+    .tab-btn .tab-label {
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .tab-btn .tab-sub {
+      font-size: 11px;
+      opacity: 0.72;
+    }
+
+    /* ── Content area ────────────────────────── */
+    .content-wrap {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .content-inner {
+      width: min(900px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 32px;
+      flex: 1;
+    }
+
+    header {
+      margin-bottom: 22px;
+    }
+
+    h1 {
+      margin: 0 0 6px;
+      font-size: clamp(22px, 3vw, 34px);
+      line-height: 1.1;
+    }
+
+    p {
+      margin: 0;
+      color: #52606d;
+      line-height: 1.55;
+    }
+
+    /* ── Phase tabs ──────────────────────────── */
+    .phase-tab { display: none; }
+    .phase-tab.active { display: block; }
+
+    /* ── Panel ───────────────────────────────── */
+    .panel {
+      background: #ffffff;
+      border: 1px solid #d9e2ec;
+      border-radius: 8px;
+      padding: 22px;
+      box-shadow: 0 1px 2px rgba(31,41,51,0.05);
+    }
+
+    .panel + .panel {
+      margin-top: 16px;
+    }
+
+    .panel-title {
+      margin: 0 0 16px;
+      font-size: 15px;
+      font-weight: 700;
+      color: #323f4b;
+    }
+
+    /* ── Grid helpers ────────────────────────── */
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0,1fr) 220px;
+      gap: 16px;
+      align-items: end;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0,1fr));
+      gap: 16px;
+      align-items: end;
+    }
+
+    /* ── Form elements ───────────────────────── */
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 700;
+      color: #323f4b;
+      font-size: 14px;
+    }
+
+    input[type="file"],
+    input[type="number"],
+    input[type="text"],
+    select {
+      width: 100%;
+      min-height: 42px;
+      border: 1px solid #bcccdc;
+      border-radius: 6px;
+      padding: 9px 12px;
+      background: #ffffff;
+      color: #1f2933;
+      font: inherit;
+      font-size: 14px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    button {
+      min-height: 40px;
+      border: 0;
+      border-radius: 6px;
+      padding: 0 16px;
+      background: #147d64;
+      color: #ffffff;
+      font: inherit;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity 120ms;
+    }
+
+    button.secondary { background: #486581; }
+    button.danger    { background: #c0392b; }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+
+    /* ── Progress ────────────────────────────── */
+    .global-footer {
+      margin-top: 20px;
+    }
+
+    .progress-wrap {
+      padding-top: 4px;
+    }
+
+    .progress-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 8px;
+      font-weight: 700;
+      font-size: 14px;
+    }
+
+    .bar {
+      height: 16px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #d9e2ec;
+    }
+
+    .fill {
+      height: 100%;
+      width: 0%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #147d64, #38a169);
+      transition: width 180ms ease;
+    }
+
+    .status {
+      margin-top: 8px;
+      min-height: 22px;
+      color: #323f4b;
+      font-size: 13px;
+    }
+
+    pre {
+      max-height: 260px;
+      overflow: auto;
+      margin: 12px 0 0;
+      padding: 12px 14px;
+      border-radius: 6px;
+      background: #1f2933;
+      color: #f5f7fa;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+
+    /* ── Warning banner ──────────────────────── */
+    .warning-banner {
+      display: none;
+      margin-top: 14px;
+      padding: 11px 16px;
+      border-radius: 6px;
+      background: #fff3cd;
+      border: 1px solid #ffc107;
+      color: #856404;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .warning-banner.visible { display: block; }
+
+    /* ── Calibration tool ────────────────────── */
+    .tool-panel {
+      margin-top: 18px;
+      border-top: 1px solid #e4e7eb;
+      padding-top: 18px;
+    }
+
+    .bbox-wrap {
+      position: relative;
+      margin-top: 10px;
+      width: 100%;
+      max-height: 480px;
+      overflow: auto;
+      border: 1px solid #bcccdc;
+      border-radius: 6px;
+      background: #111827;
+    }
+
+    .bbox-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0,1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .calibration-card {
+      border: 1px solid #d9e2ec;
+      border-radius: 8px;
+      padding: 12px;
+      background: #ffffff;
+    }
+
+    .bbox-title {
+      margin: 0 0 8px;
+      font-weight: 700;
+      color: #323f4b;
+      font-size: 14px;
+    }
+
+    canvas {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      cursor: crosshair;
+    }
+
+    .calibration-grid {
+      margin-top: 12px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0,1fr));
+      gap: 12px;
+      align-items: end;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0,1fr));
+      gap: 10px;
+      margin-top: 12px;
+      font-size: 13px;
+    }
+
+    .stat {
+      padding: 9px 10px;
+      border: 1px solid #e4e7eb;
+      border-radius: 6px;
+      background: #f8fafc;
+      overflow-wrap: anywhere;
+    }
+
+    /* ── Paths ───────────────────────────────── */
+    .paths {
+      margin-top: 16px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0,1fr));
+      gap: 10px;
+      color: #52606d;
+      font-size: 13px;
+    }
+
+    .path {
+      padding: 9px 10px;
+      border: 1px solid #e4e7eb;
+      border-radius: 6px;
+      overflow-wrap: anywhere;
+      background: #f8fafc;
+    }
+
+    /* ── Class status panel ──────────────────── */
+    .class-status-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 9px 12px;
+      border: 1px solid #e4e7eb;
+      border-radius: 6px;
+      background: #f8fafc;
+      margin-bottom: 6px;
+    }
+
+    .class-status-item:last-child { margin-bottom: 0; }
+
+    .class-name-text {
+      font-weight: 700;
+      font-size: 14px;
+      color: #323f4b;
+    }
+
+    .status-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .status-badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+    }
+
+    .status-btn {
+      min-height: 28px !important;
+      font-size: 12px !important;
+      padding: 0 11px !important;
+    }
+
+    /* ── Review grid ─────────────────────────── */
+    .review-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .review-thumb {
+      border: 1px solid #d9e2ec;
+      border-radius: 6px;
+      overflow: hidden;
+      background: #111827;
+    }
+
+    .review-thumb img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .review-thumb-label {
+      padding: 4px 7px;
+      font-size: 11px;
+      color: #52606d;
+      background: #f8fafc;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .accept-result {
+      margin-top: 10px;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .accept-result.success { color: #0a3622; }
+    .accept-result.error   { color: #c92a2a; }
+
+    /* ── Phase 1 validation ─────────────────── */
+    .validation-card {
+      border: 1px solid #d9e2ec;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      overflow: hidden;
+    }
+
+    .validation-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: #f8fafc;
+      border-bottom: 1px solid #d9e2ec;
+      gap: 8px;
+    }
+
+    .validation-card-header .cls-name {
+      font-weight: 700;
+      font-size: 14px;
+      color: #1f2933;
+    }
+
+    .validation-card-body {
+      padding: 12px 14px;
+    }
+
+    .check-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      padding: 3px 0;
+      color: #3e4c5e;
+    }
+
+    .check-icon {
+      font-size: 14px;
+      font-weight: 900;
+      width: 18px;
+      flex-shrink: 0;
+      text-align: center;
+    }
+    .check-icon.ok    { color: #1b7e3a; }
+    .check-icon.warn  { color: #c47b00; }
+    .check-icon.error { color: #c92a2a; }
+
+    .badge-ok    { background: #d3f9d8; color: #1b7e3a; }
+    .badge-warn  { background: #fff3cd; color: #856404; }
+    .badge-error { background: #ffe0e0; color: #c92a2a; }
+
+    .val-rename-btn {
+      margin-left: 6px;
+      min-height: 22px !important;
+      font-size: 11px !important;
+      padding: 0 8px !important;
+    }
+
+    .val-summary-bar {
+      display: flex;
+      gap: 20px;
+      padding: 10px 14px;
+      background: #f0f4f8;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      font-size: 13px;
+      color: #3e4c5e;
+      flex-wrap: wrap;
+    }
+    .val-summary-bar strong { color: #1f2933; }
+
+    /* ── System Status panel ─────────────────── */
+    .health-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 7px 0;
+      border-bottom: 1px solid #e4e7eb;
+      font-size: 13px;
+    }
+    .health-row:last-child { border-bottom: none; }
+    .health-dot {
+      flex-shrink: 0;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-top: 3px;
+    }
+    .health-dot.ok    { background: #0f9d58; }
+    .health-dot.warn  { background: #f4a100; }
+    .health-dot.error { background: #c92a2a; }
+    .health-label { font-weight: 600; color: #243b53; min-width: 130px; }
+    .health-detail { color: #627d98; flex: 1; }
+    .health-detail ul { margin: 4px 0 0; padding: 0 0 0 16px; }
+    .health-detail li { margin: 2px 0; }
+    #healthStatus { margin-bottom: 6px; }
+
+    /* ── Placeholder panels ──────────────────── */
+    .placeholder {
+      text-align: center;
+      padding: 56px 40px;
+      color: #9aa5b4;
+    }
+
+    .placeholder h2 {
+      font-size: 18px;
+      color: #627d98;
+      margin: 0 0 8px;
+      font-weight: 700;
+    }
+
+    .placeholder p {
+      color: #9aa5b4;
+      font-size: 14px;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+    }
+
+    .badge-coming {
+      background: #e4e7eb;
+      color: #627d98;
+    }
+
+    /* ── Settings ────────────────────────────── */
+    .settings-section {
+      margin-bottom: 24px;
+    }
+
+    .settings-heading {
+      font-size: 12px;
+      font-weight: 700;
+      color: #486581;
+      text-transform: uppercase;
+      letter-spacing: 0.9px;
+      margin: 0 0 12px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #e4e7eb;
+    }
+
+    .settings-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 12px;
+    }
+
+    .settings-field label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #52606d;
+      margin-bottom: 4px;
+      text-transform: capitalize;
+    }
+
+    .settings-input {
+      width: 100%;
+      min-height: 34px;
+      border: 1px solid #bcccdc;
+      border-radius: 5px;
+      padding: 5px 9px;
+      font: inherit;
+      font-size: 13px;
+      background: #fff;
+      color: #1f2933;
+    }
+
+    .settings-msg {
+      padding: 10px 14px;
+      border-radius: 6px;
+      margin-top: 14px;
+      font-size: 13px;
+      display: none;
+    }
+
+    .settings-msg.success {
+      background: #d3f9d8;
+      color: #1a7431;
+      border: 1px solid #8ce99a;
+    }
+
+    .settings-msg.error {
+      background: #ffe3e3;
+      color: #c92a2a;
+      border: 1px solid #ffa8a8;
+    }
+
+    /* ── Phase 3 Training ───────────────────────── */
+    .epoch-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      margin-bottom: 6px;
+      color: #3e4c5e;
+    }
+
+    .quality-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 5px 14px;
+      border-radius: 999px;
+      font-weight: 700;
+      font-size: 14px;
+    }
+
+    .quality-excellent  { background: #d3f9d8; color: #1b7e3a; }
+    .quality-acceptable { background: #fff3cd; color: #856404; }
+    .quality-poor       { background: #ffe0e0; color: #c92a2a; }
+    .quality-unknown    { background: #e4e7eb; color: #627d98; }
+
+    .train-fill {
+      background: linear-gradient(90deg, #2563eb, #7c3aed);
+    }
+
+    /* ── Responsive ──────────────────────────── */
+    @media (max-width: 780px) {
+      .sidebar { width: 150px; }
+      .grid, .bbox-grid, .calibration-grid, .paths, .stats {
+        grid-template-columns: 1fr;
+      }
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 560px) {
+      .app-layout { flex-direction: column; }
+      .sidebar { width: 100%; min-height: unset; position: static; height: auto; }
+      .sidebar-nav { display: flex; flex-wrap: wrap; padding: 6px 8px; }
+      .tab-btn { width: auto; flex-direction: row; gap: 6px; align-items: center; padding: 8px 12px; border-radius: 6px; }
+      .tab-btn .tab-sub { display: none; }
+    }
+  </style>
+</head>
+<body>
+<div class="app-layout">
+
+  <!-- ── Sidebar navigation ─────────────────────────────────── -->
+  <nav class="sidebar" aria-label="Phase navigation">
+    <div class="sidebar-brand">
+      Datagen
+      <small>YOLO Dataset Tool</small>
+    </div>
+    <div class="sidebar-nav">
+      <button class="tab-btn active" data-tab="phase0" type="button">
+        <span class="tab-label">Phase 0</span>
+        <span class="tab-sub">Data Prep</span>
+      </button>
+      <button class="tab-btn" data-tab="phase1" type="button">
+        <span class="tab-label">Phase 1</span>
+        <span class="tab-sub">Validation</span>
+      </button>
+      <button class="tab-btn" data-tab="phase2" type="button">
+        <span class="tab-label">Phase 2</span>
+        <span class="tab-sub">Synthesis</span>
+      </button>
+      <button class="tab-btn" data-tab="phase3" type="button">
+        <span class="tab-label">Phase 3</span>
+        <span class="tab-sub">Training</span>
+      </button>
+      <button class="tab-btn" data-tab="phase4" type="button">
+        <span class="tab-label">Phase 4</span>
+        <span class="tab-sub">Evaluation</span>
+      </button>
+      <button class="tab-btn" data-tab="settings" type="button">
+        <span class="tab-label">Settings</span>
+        <span class="tab-sub">Config</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- ── Main content ───────────────────────────────────────── -->
+  <div class="content-wrap">
+    <div class="content-inner">
+
+      <header>
+        <h1>Video Dataset Processor</h1>
+        <p>Upload videos, extract frames, remove backgrounds, and synthesize YOLO training data.</p>
+      </header>
+
+      <!-- ══════════════════════════════════════════════════════
+           PHASE 0 — Data Preparation
+           ══════════════════════════════════════════════════════ -->
+      <section id="tab-phase0" class="phase-tab active">
+
+        <!-- Upload + process panel -->
+        <div class="panel">
+          <p class="panel-title">Video Upload &amp; Frame Extraction</p>
+          <form id="uploadForm">
+            <div class="grid">
+              <div>
+                <label for="videos">Video folder</label>
+                <input id="videos" name="videos" type="file" accept="video/*,.mov,.MOV"
+                       webkitdirectory directory multiple>
+              </div>
+              <div>
+                <label for="imagesPerVideo">Images per video</label>
+                <input id="imagesPerVideo" name="images_per_video" type="number" min="1" step="1" value="108">
+              </div>
+            </div>
+            <div class="actions">
+              <button id="uploadButton" type="submit">Upload Folder</button>
+              <button id="startButton" type="button" class="secondary">Process Videos</button>
+              <button id="clearButton" type="button" class="secondary danger">Clear All</button>
+            </div>
+          </form>
+
+          <!-- Frame count warning banner -->
+          <div id="frameCountWarning" class="warning-banner" role="alert"></div>
+        </div>
+
+        <!-- Distance calibration tool -->
+        <div class="panel">
+          <p class="panel-title">Distance Calibration &amp; Object Profile</p>
+          <div class="tool-panel" style="margin-top:0;border-top:none;padding-top:0;">
+            <div class="grid">
+              <div></div>
+              <div>
+                <label for="classSelect">Class</label>
+                <select id="classSelect"></select>
+              </div>
+            </div>
+            <div class="actions">
+              <button id="saveProfileButton" type="button" class="secondary">Save Box Profile</button>
+              <button id="setCloseButton" type="button" class="secondary">Set Close</button>
+              <button id="setFarButton" type="button" class="secondary">Set Far</button>
+              <button id="clearBoxButton" type="button" class="secondary">Clear Box</button>
+            </div>
+            <div class="bbox-grid">
+              <div class="calibration-card">
+                <p class="bbox-title">Close image bbox</p>
+                <label for="closeImage">Close distance image</label>
+                <input id="closeImage" type="file" accept="image/*">
+                <label for="closeDistance">Close distance (cm)</label>
+                <input id="closeDistance" type="number" min="1" step="0.1" placeholder="e.g. 20">
+                <div class="bbox-wrap">
+                  <canvas id="closeCanvas" width="480" height="270"></canvas>
+                </div>
+              </div>
+              <div class="calibration-card">
+                <p class="bbox-title">Far image bbox</p>
+                <label for="farImage">Far distance image</label>
+                <input id="farImage" type="file" accept="image/*">
+                <label for="farDistance">Far distance (cm)</label>
+                <input id="farDistance" type="number" min="1" step="0.1" placeholder="e.g. 80">
+                <div class="bbox-wrap">
+                  <canvas id="farCanvas" width="480" height="270"></canvas>
+                </div>
+              </div>
+            </div>
+            <div class="calibration-grid">
+              <div>
+                <label for="wantedDistanceMin">Wanted distance min (cm)</label>
+                <input id="wantedDistanceMin" type="number" min="1" step="0.1" placeholder="e.g. 40">
+              </div>
+              <div>
+                <label for="wantedDistanceMax">Wanted distance max (cm)</label>
+                <input id="wantedDistanceMax" type="number" min="1" step="0.1" placeholder="e.g. 60">
+              </div>
+            </div>
+            <div class="stats">
+              <div class="stat">Box: <span id="boxStats">none</span></div>
+              <div class="stat">Brightness: <span id="brightnessValue">0</span></div>
+              <div class="stat">Close: <span id="closeStats">none</span></div>
+              <div class="stat">Far: <span id="farStats">none</span></div>
+              <div class="stat">Wanted size: <span id="wantedStats">none</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Background Categories panel (standalone — no calibration required) -->
+        <div class="panel">
+          <p class="panel-title">Background Categories</p>
+          <p style="color:#6b7a8f;font-size:13px;margin:0 0 12px;">
+            Restrict each class to specific background subfolders inside <code>bg/</code>.
+            Leave all unchecked to allow any background for that class.
+          </p>
+          <div class="grid" style="margin-bottom:12px;">
+            <div>
+              <label for="bgClassSelect">Class</label>
+              <select id="bgClassSelect"></select>
+            </div>
+          </div>
+          <div id="bgCategoryCheckboxes" style="display:flex;flex-wrap:wrap;gap:8px 18px;font-size:13px;margin-bottom:14px;">
+            <span style="color:#9aa5b4;">Loading…</span>
+          </div>
+          <div class="actions">
+            <button id="saveBgCatsBtn" type="button" class="secondary">Save Categories</button>
+          </div>
+          <div id="bgCatsMsg" style="display:none;font-size:13px;margin-top:8px;"></div>
+        </div>
+
+        <!-- ── Class status + review ─────────────────── -->
+        <div class="panel" id="classStatusPanel">
+          <p class="panel-title">Class Status</p>
+          <div id="classStatusList">
+            <p style="color:#9aa5b4;font-size:13px;">No classes detected. Upload and process a video folder first.</p>
+          </div>
+        </div>
+
+        <!-- ── Review grid (hidden until user clicks Review) ── -->
+        <div class="panel" id="reviewPanel" style="display:none;">
+          <p class="panel-title" style="display:flex;align-items:baseline;gap:10px;">
+            Review: <span id="reviewClassName" style="color:#147d64;"></span>
+            <span id="reviewFileCount" style="font-weight:400;color:#52606d;font-size:13px;"></span>
+          </p>
+          <p style="font-size:13px;color:#52606d;margin:0 0 4px;">
+            Green overlay highlights the detected object in each frame.
+            Confirm the mask quality looks correct before accepting.
+          </p>
+          <div id="reviewGrid" class="review-grid"></div>
+          <div class="actions" style="margin-top:14px;">
+            <button id="acceptButton" type="button" disabled>Accept &amp; Send to Phase 1</button>
+            <button id="closeReviewButton" type="button" class="secondary">Close Review</button>
+          </div>
+          <div id="acceptResult" class="accept-result"></div>
+        </div>
+
+        <!-- System Health -->
+        <div class="panel">
+          <p class="panel-title">System Status</p>
+          <div id="healthStatus"><span style="color:#9aa5b4;font-size:13px;">Loading…</span></div>
+          <div class="actions" style="margin-top:10px;">
+            <button id="healthRefreshBtn" type="button" class="secondary">Refresh Status</button>
+          </div>
+        </div>
+
+        <!-- Directory paths -->
+        <div class="panel">
+          <p class="panel-title">Dataset Directories</p>
+          <div class="paths">
+            <div class="path" id="pathVideos">Videos: loading…</div>
+            <div class="path" id="pathFrames">Frames: loading…</div>
+            <div class="path" id="pathRembg">Removed background: loading…</div>
+            <div class="path" id="pathMasks">Masks: loading…</div>
+            <div class="path" id="pathSynth">Synthesized images: loading…</div>
+            <div class="path" id="pathLabels">YOLO labels: loading…</div>
+            <div class="path" id="pathYaml">YOLO YAML: loading…</div>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- ══════════════════════════════════════════════════════
+           PHASE 1 — Validation (placeholder)
+           ══════════════════════════════════════════════════════ -->
+      <section id="tab-phase1" class="phase-tab">
+        <div class="panel">
+          <p class="panel-title">Dataset Validation</p>
+          <p style="color:#6b7a8f;font-size:13px;margin:0 0 16px;">
+            Checks filename convention, tilt balance, mask integrity, and background count
+            for every class accepted in Phase 0.
+          </p>
+          <div class="actions">
+            <button id="validateBtn" type="button">Validate Dataset</button>
+          </div>
+          <div id="phase1ValidationResult" style="display:none;margin-top:20px;">
+            <div id="phase1Summary" class="val-summary-bar"></div>
+            <div id="phase1Cards"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ══════════════════════════════════════════════════════
+           PHASE 2 — Synthesis
+           ══════════════════════════════════════════════════════ -->
+      <section id="tab-phase2" class="phase-tab">
+        <!-- Config summary -->
+        <div class="panel">
+          <p class="panel-title">Synthesis Settings</p>
+          <div id="phase2ConfigSummary" style="display:flex;gap:24px;flex-wrap:wrap;font-size:13px;color:#3e4c5e;margin-bottom:4px;"></div>
+        </div>
+
+        <!-- Preview -->
+        <div class="panel">
+          <p class="panel-title">Preview</p>
+          <p style="color:#6b7a8f;font-size:13px;margin:0 0 12px;">Generate one sample image to verify placement and augmentation before a full run.</p>
+          <div class="actions">
+            <button id="previewBtn" type="button">Generate Preview</button>
+          </div>
+          <div id="previewResult" style="display:none;margin-top:14px;">
+            <div id="previewMeta" style="font-size:12px;color:#6b7a8f;margin-bottom:6px;"></div>
+            <img id="previewImg" src="" alt="Preview" style="max-width:100%;border-radius:6px;border:1px solid #d9e2ec;">
+          </div>
+          <div id="previewError" style="display:none;color:#c92a2a;font-size:13px;margin-top:10px;"></div>
+        </div>
+
+        <!-- Synthesize -->
+        <div class="panel">
+          <p class="panel-title">Generate Dataset</p>
+          <div class="grid">
+            <div>
+              <label for="totalImages">Total images (train + val + test)</label>
+              <input id="totalImages" name="total_images" type="number" min="1" step="1" value="100">
+            </div>
+            <div style="display:flex;align-items:flex-end;">
+              <div id="splitPreview" style="font-size:12px;color:#6b7a8f;padding-bottom:8px;"></div>
+            </div>
+          </div>
+          <div class="actions">
+            <button id="synthesizeButton" type="button">Synthesize</button>
+          </div>
+          <div id="generationReport" style="display:none;margin-top:14px;"></div>
+        </div>
+      </section>
+
+      <!-- ══════════════════════════════════════════════════════
+           PHASE 3 — Training
+           ══════════════════════════════════════════════════════ -->
+      <section id="tab-phase3" class="phase-tab">
+
+        <!-- Config summary -->
+        <div class="panel">
+          <p class="panel-title">Training Configuration</p>
+          <div id="phase3ConfigSummary" style="display:flex;gap:24px;flex-wrap:wrap;font-size:13px;color:#3e4c5e;margin-bottom:4px;"></div>
+          <p style="color:#9aa5b4;font-size:12px;margin-top:8px;">Edit model, epochs, batch, and imgsz in Settings → Phase 3.</p>
+        </div>
+
+        <!-- Train control -->
+        <div class="panel">
+          <p class="panel-title">Train</p>
+          <p style="color:#6b7a8f;font-size:13px;margin:0 0 12px;">
+            Runs <code style="background:#f0f4f8;padding:1px 5px;border-radius:3px;">yolo train</code>
+            on the synthesized dataset. Requires Phase 2 to be complete.
+          </p>
+          <div class="actions">
+            <button id="trainButton" type="button">Start Training</button>
+            <button id="stopTrainButton" type="button" class="secondary danger" disabled>Stop</button>
+          </div>
+          <div id="phase3Error" style="display:none;color:#c92a2a;font-size:13px;margin-top:10px;"></div>
+          <div style="margin-top:16px;">
+            <div class="epoch-meta" id="phase3EpochMeta">
+              <span>Not started</span><span>0%</span>
+            </div>
+            <div class="bar">
+              <div id="phase3EpochFill" class="fill train-fill" style="width:0%;"></div>
+            </div>
+            <div id="phase3ClsLossLive" style="margin-top:6px;font-size:12px;color:#6b7a8f;"></div>
+          </div>
+        </div>
+
+        <!-- Results (shown after training completes) -->
+        <div class="panel" id="phase3Results" style="display:none;">
+          <p class="panel-title">Training Results</p>
+          <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:14px;">
+            <span id="phase3Quality" class="quality-badge quality-unknown">—</span>
+            <span style="font-size:13px;color:#3e4c5e;">
+              Final val/cls_loss: <strong id="phase3ClsLoss">—</strong>
+            </span>
+          </div>
+          <p style="font-size:12px;color:#6b7a8f;margin:0 0 10px;">
+            Excellent: &lt; cls_loss_excellent threshold &nbsp;|&nbsp;
+            Acceptable: &lt; cls_loss_acceptable threshold &nbsp;|&nbsp;
+            Poor: above thresholds
+          </p>
+          <div class="actions">
+            <button id="downloadBestBtn" type="button" class="secondary" disabled>Download best.pt</button>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- ══════════════════════════════════════════════════════
+           PHASE 4 — Video Evaluation
+           ══════════════════════════════════════════════════════ -->
+      <section id="tab-phase4" class="phase-tab">
+
+        <!-- Setup panel -->
+        <div class="panel">
+          <p class="panel-title">Video Evaluation Setup</p>
+          <p style="color:#6b7a8f;font-size:13px;margin:0 0 14px;">
+            Run YOLO inference on a video, sampling one frame per second, and export a per-detection CSV.
+          </p>
+
+          <div style="margin-bottom:12px;">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;color:#323f4b;">
+              <input type="checkbox" id="phase4UsePhase3Model" checked style="width:auto;min-height:auto;">
+              Use Phase 3 trained model (best.pt)
+            </label>
+          </div>
+          <div id="phase4ModelRow" style="display:none;margin-bottom:12px;">
+            <label for="phase4ModelFile">Custom model file (.pt)</label>
+            <input id="phase4ModelFile" type="file" accept=".pt">
+          </div>
+          <div style="margin-bottom:4px;">
+            <label for="phase4VideoFile">Evaluation video</label>
+            <input id="phase4VideoFile" type="file" accept="video/*,.mov,.MOV">
+          </div>
+
+          <div class="actions">
+            <button id="phase4StartBtn" type="button">Start Evaluation</button>
+            <button id="phase4StopBtn" type="button" class="secondary danger" disabled>Stop</button>
+          </div>
+          <div id="phase4Error" style="display:none;color:#c92a2a;font-size:13px;margin-top:10px;"></div>
+        </div>
+
+        <!-- Progress panel -->
+        <div class="panel">
+          <p class="panel-title">Evaluation Progress</p>
+          <div class="epoch-meta" id="phase4ProgressMeta">
+            <span>Not started</span><span>0%</span>
+          </div>
+          <div class="bar">
+            <div id="phase4ProgressFill" class="fill" style="width:0%;"></div>
+          </div>
+          <div id="phase4DetCount" style="margin-top:6px;font-size:12px;color:#6b7a8f;"></div>
+        </div>
+
+        <!-- Results panel (hidden until complete) -->
+        <div class="panel" id="phase4Results" style="display:none;">
+          <p class="panel-title">Detection Results</p>
+          <div id="phase4SummaryDiv"></div>
+          <div class="actions" style="margin-top:14px;">
+            <button id="phase4DownloadBtn" type="button" class="secondary">Download CSV</button>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- ══════════════════════════════════════════════════════
+           SETTINGS — Config editor
+           ══════════════════════════════════════════════════════ -->
+      <section id="tab-settings" class="phase-tab">
+        <div class="panel">
+          <p class="panel-title">Configuration — config.yaml</p>
+          <div id="settingsContent">
+            <p style="color:#9aa5b4;font-size:13px;">Loading configuration…</p>
+          </div>
+          <div class="actions" style="margin-top:20px;">
+            <button id="saveSettingsBtn" type="button">Save Settings</button>
+          </div>
+          <div id="settingsMsg" class="settings-msg"></div>
+        </div>
+      </section>
+
+      <!-- ══════════════════════════════════════════════════════
+           GLOBAL — Progress bar + log (always visible)
+           ══════════════════════════════════════════════════════ -->
+      <div class="global-footer panel">
+        <div class="progress-wrap">
+          <div class="progress-meta">
+            <span id="stage">Idle</span>
+            <span id="percent">0%</span>
+          </div>
+          <div class="bar" aria-label="Processing progress">
+            <div id="fill" class="fill"></div>
+          </div>
+          <div id="status" class="status">Upload a folder of videos to begin.</div>
+          <pre id="log"></pre>
+        </div>
+      </div>
+
+    </div><!-- /.content-inner -->
+  </div><!-- /.content-wrap -->
+
+</div><!-- /.app-layout -->
+
+<script>
+  // ── Element references ─────────────────────────────────────────
+  const uploadForm            = document.getElementById("uploadForm");
+  const uploadButton          = document.getElementById("uploadButton");
+  const startButton           = document.getElementById("startButton");
+  const synthesizeButton      = document.getElementById("synthesizeButton");
+  const clearButton           = document.getElementById("clearButton");
+  const videosInput           = document.getElementById("videos");
+  const imagesPerVideoInput   = document.getElementById("imagesPerVideo");
+  const totalImagesInput      = document.getElementById("totalImages");
+  const closeImageInput       = document.getElementById("closeImage");
+  const farImageInput         = document.getElementById("farImage");
+  const classSelect           = document.getElementById("classSelect");
+  const saveProfileButton     = document.getElementById("saveProfileButton");
+  const setCloseButton        = document.getElementById("setCloseButton");
+  const setFarButton          = document.getElementById("setFarButton");
+  const clearBoxButton        = document.getElementById("clearBoxButton");
+  const closeDistanceInput    = document.getElementById("closeDistance");
+  const farDistanceInput      = document.getElementById("farDistance");
+  const wantedDistanceMinInput = document.getElementById("wantedDistanceMin");
+  const wantedDistanceMaxInput = document.getElementById("wantedDistanceMax");
+  const closeCanvas           = document.getElementById("closeCanvas");
+  const farCanvas             = document.getElementById("farCanvas");
+  const boxStatsEl            = document.getElementById("boxStats");
+  const brightnessValueEl     = document.getElementById("brightnessValue");
+  const closeStatsEl          = document.getElementById("closeStats");
+  const farStatsEl            = document.getElementById("farStats");
+  const wantedStatsEl         = document.getElementById("wantedStats");
+  const stageEl               = document.getElementById("stage");
+  const percentEl             = document.getElementById("percent");
+  const fillEl                = document.getElementById("fill");
+  const statusEl              = document.getElementById("status");
+  const logEl                 = document.getElementById("log");
+  const frameCountWarning     = document.getElementById("frameCountWarning");
+
+  let brightnessValue = 0;
+  let closeSample = null;
+  let farSample = null;
+  const profileTargetSize = 640;
+  const statsCanvas = document.createElement("canvas");
+  const statsCtx = statsCanvas.getContext("2d", { willReadFrequently: true });
+
+  const calibrationViews = {
+    close: {
+      canvas: closeCanvas,
+      ctx: closeCanvas.getContext("2d", { willReadFrequently: true }),
+      image: null, displayScale: 1, activeBox: null, draftBox: null,
+      isDrawing: false, brightness: 0,
+    },
+    far: {
+      canvas: farCanvas,
+      ctx: farCanvas.getContext("2d", { willReadFrequently: true }),
+      image: null, displayScale: 1, activeBox: null, draftBox: null,
+      isDrawing: false, brightness: 0,
+    },
+  };
+
+  // ── Tab switching ──────────────────────────────────────────────
+  const tabBtns   = document.querySelectorAll(".tab-btn");
+  const phaseTabs = document.querySelectorAll(".phase-tab");
+
+  function activateTab(tabId) {
+    tabBtns.forEach(btn => btn.classList.toggle("active", btn.dataset.tab === tabId));
+    phaseTabs.forEach(sec => sec.classList.toggle("active", sec.id === `tab-${tabId}`));
+    if (tabId === "phase0") {
+      loadBgCategories();
+      loadObjectProfiles();
+      loadHealthStatus();
+    }
+    if (tabId === "settings") {
+      loadSettingsForm();
+    }
+    if (tabId === "phase1") {
+      validatePhase1();
+    }
+    if (tabId === "phase2") {
+      activatePhase2Tab();
+    }
+    if (tabId === "phase3") {
+      activatePhase3Tab();
+    }
+    if (tabId === "phase4") {
+      activatePhase4Tab();
+    }
+  }
+
+  tabBtns.forEach(btn => btn.addEventListener("click", () => activateTab(btn.dataset.tab)));
+
+  // ── setBusy ────────────────────────────────────────────────────
+  function setBusy(isBusy) {
+    [
+      uploadButton, startButton, synthesizeButton, clearButton,
+      videosInput, imagesPerVideoInput, totalImagesInput,
+      closeImageInput, farImageInput, classSelect,
+      saveProfileButton, setCloseButton, setFarButton, clearBoxButton,
+      closeDistanceInput, farDistanceInput,
+      wantedDistanceMinInput, wantedDistanceMaxInput,
+    ].forEach(el => { if (el) el.disabled = isBusy; });
+  }
+
+  // ── renderProgress ─────────────────────────────────────────────
+  function renderProgress(data) {
+    const percent = Math.max(0, Math.min(100, Number(data.percent || 0)));
+    stageEl.textContent  = data.stage   || "Idle";
+    percentEl.textContent = `${percent}%`;
+    fillEl.style.width   = `${percent}%`;
+    statusEl.textContent = data.error ? data.error : (data.message || "");
+    logEl.textContent    = (data.log || []).join("\n");
+    setBusy(Boolean(data.running));
+
+    // Frame count warning
+    if (data.frame_count_warning) {
+      frameCountWarning.textContent = data.frame_count_warning;
+      frameCountWarning.classList.add("visible");
+    } else if (data.stage === "Complete" || data.stage === "Idle") {
+      frameCountWarning.classList.remove("visible");
+    }
+
+    if (data.stage === "Complete" && !data.running) {
+      refreshPhase0Status();
+    }
+  }
+
+  // ── HTTP helpers ───────────────────────────────────────────────
+  async function postForm(url, formData) {
+    const response = await fetch(url, { method: "POST", body: formData });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Request failed");
+    return data;
+  }
+
+  async function postJson(url, payload) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Request failed");
+    return data;
+  }
+
+  // ── Class list ─────────────────────────────────────────────────
+  async function refreshClasses() {
+    const response = await fetch("/classes");
+    const data = await response.json();
+    const classes = data.classes || [];
+    classSelect.innerHTML = "";
+    for (const name of classes) {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      classSelect.appendChild(option);
+    }
+  }
+
+  // ── Background categories ──────────────────────────────────────
+  let _bgCategories = [];
+  let _objectProfiles = {};
+  const bgClassSelect = document.getElementById("bgClassSelect");
+
+  function renderBgCategoryCheckboxes(categories, selected) {
+    const div = document.getElementById("bgCategoryCheckboxes");
+    if (!div) return;
+    if (!categories.length) {
+      div.innerHTML = '<span style="color:#9aa5b4;">No subfolders found in <code>bg/</code>. Create subfolders like <code>bg/kitchen/</code> and place background images inside.</span>';
+      return;
+    }
+    div.innerHTML = "";
+    for (const cat of categories) {
+      const label = document.createElement("label");
+      label.style.cssText = "display:flex;align-items:center;gap:5px;cursor:pointer;";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.value = cat;
+      cb.name = "bg_category";
+      cb.style.cssText = "width:auto;min-height:auto;margin:0;";
+      cb.checked = selected.includes(cat);
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(cat));
+      div.appendChild(label);
+    }
+  }
+
+  async function loadBgCategories() {
+    const div = document.getElementById("bgCategoryCheckboxes");
+    try {
+      const r = await fetch("/bg/categories");
+      const d = await r.json();
+      _bgCategories = d.categories || [];
+      const cls = bgClassSelect ? bgClassSelect.value : "";
+      const current = cls ? ((_objectProfiles[cls] || {}).background_categories || []) : [];
+      renderBgCategoryCheckboxes(_bgCategories, current);
+    } catch (err) {
+      if (div) div.innerHTML = `<span style="color:#c92a2a;font-size:12px;">Failed to load categories: ${err.message}</span>`;
+    }
+  }
+
+  async function loadObjectProfiles() {
+    try {
+      const r = await fetch("/object-profiles");
+      _objectProfiles = await r.json();
+      if (bgClassSelect) {
+        const classesResp = await fetch("/classes");
+        const classesData = await classesResp.json();
+        const allClasses = [...new Set([
+          ...(classesData.classes || []),
+          ...Object.keys(_objectProfiles),
+        ])].sort();
+        const prev = bgClassSelect.value;
+        bgClassSelect.innerHTML = "";
+        if (!allClasses.length) {
+          const opt = document.createElement("option");
+          opt.value = "";
+          opt.textContent = "— no classes found —";
+          bgClassSelect.appendChild(opt);
+        } else {
+          for (const name of allClasses) {
+            const opt = document.createElement("option");
+            opt.value = name;
+            opt.textContent = name;
+            bgClassSelect.appendChild(opt);
+          }
+          if (prev && allClasses.includes(prev)) bgClassSelect.value = prev;
+        }
+      }
+      const cls = bgClassSelect ? bgClassSelect.value : "";
+      if (cls) {
+        renderBgCategoryCheckboxes(_bgCategories, (_objectProfiles[cls] || {}).background_categories || []);
+      }
+    } catch (err) {
+      console.warn("loadObjectProfiles:", err);
+    }
+  }
+
+  if (bgClassSelect) {
+    bgClassSelect.addEventListener("change", () => {
+      const cls = bgClassSelect.value;
+      const cats = cls ? ((_objectProfiles[cls] || {}).background_categories || []) : [];
+      renderBgCategoryCheckboxes(_bgCategories, cats);
+    });
+  }
+
+  document.getElementById("saveBgCatsBtn").addEventListener("click", async () => {
+    const cls = bgClassSelect ? bgClassSelect.value : "";
+    const msgEl = document.getElementById("bgCatsMsg");
+    if (!cls) {
+      msgEl.style.cssText = "display:block;color:#c92a2a;font-size:13px;margin-top:8px;";
+      msgEl.textContent = "Select a class first.";
+      return;
+    }
+    const selected = Array.from(
+      document.querySelectorAll('#bgCategoryCheckboxes input[name="bg_category"]:checked')
+    ).map(cb => cb.value);
+    try {
+      const r = await fetch("/object-profile/bg-categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ class_name: cls, background_categories: selected }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "Save failed");
+      if (!_objectProfiles[cls]) _objectProfiles[cls] = {};
+      _objectProfiles[cls].background_categories = selected;
+      msgEl.style.cssText = "display:block;color:#147d64;font-size:13px;margin-top:8px;";
+      msgEl.textContent = selected.length
+        ? `Saved: ${cls} → ${selected.join(", ")}`
+        : `Saved: ${cls} → any background`;
+    } catch (err) {
+      msgEl.style.cssText = "display:block;color:#c92a2a;font-size:13px;margin-top:8px;";
+      msgEl.textContent = `Error: ${err.message}`;
+    }
+    setTimeout(() => { msgEl.style.display = "none"; }, 4000);
+  });
+
+  // ── Calibration canvas helpers ─────────────────────────────────
+  function canvasPoint(event, view) {
+    const rect = view.canvas.getBoundingClientRect();
+    return {
+      x: Math.round((event.clientX - rect.left) * (view.canvas.width / rect.width)),
+      y: Math.round((event.clientY - rect.top) * (view.canvas.height / rect.height)),
+    };
+  }
+
+  function normalizedBox(start, end, view) {
+    const x = Math.max(0, Math.min(start.x, end.x));
+    const y = Math.max(0, Math.min(start.y, end.y));
+    const right  = Math.min(view.canvas.width,  Math.max(start.x, end.x));
+    const bottom = Math.min(view.canvas.height, Math.max(start.y, end.y));
+    return { x, y, width: Math.max(0, right - x), height: Math.max(0, bottom - y) };
+  }
+
+  function drawCanvas(view) {
+    view.ctx.clearRect(0, 0, view.canvas.width, view.canvas.height);
+    if (view.image) {
+      view.ctx.drawImage(view.image, 0, 0, view.canvas.width, view.canvas.height);
+    } else {
+      view.ctx.fillStyle = "#111827";
+      view.ctx.fillRect(0, 0, view.canvas.width, view.canvas.height);
+    }
+    const box = view.draftBox || view.activeBox;
+    if (box && box.width > 0 && box.height > 0) {
+      view.ctx.lineWidth = Math.max(2, Math.round(2 * view.displayScale));
+      view.ctx.strokeStyle = "#22c55e";
+      view.ctx.strokeRect(box.x, box.y, box.width, box.height);
+    }
+  }
+
+  function updateViewStats(view) {
+    const box = view.activeBox;
+    if (!box || box.width < 2 || box.height < 2 || !view.image) {
+      view.brightness = 0;
+      return null;
+    }
+    statsCanvas.width  = view.canvas.width;
+    statsCanvas.height = view.canvas.height;
+    statsCtx.drawImage(view.image, 0, 0, statsCanvas.width, statsCanvas.height);
+    const imageData = statsCtx.getImageData(box.x, box.y, box.width, box.height).data;
+    let vTotal = 0;
+    const count = Math.max(1, imageData.length / 4);
+    for (let index = 0; index < imageData.length; index += 4) {
+      vTotal += Math.max(imageData[index], imageData[index + 1], imageData[index + 2]) / 255;
+    }
+    view.brightness = vTotal / count;
+    return boxToTargetSize(box, view);
+  }
+
+  function updateStats() {
+    const closeBox = updateViewStats(calibrationViews.close);
+    const farBox   = updateViewStats(calibrationViews.far);
+    const activeBoxText = [
+      closeBox ? `close ${closeBox.width} x ${closeBox.height}px` : null,
+      farBox   ? `far ${farBox.width} x ${farBox.height}px`       : null,
+    ].filter(Boolean).join(", ");
+    boxStatsEl.textContent = activeBoxText || "none";
+    const brightnessParts = [
+      closeBox ? `close ${calibrationViews.close.brightness.toFixed(4)}` : null,
+      farBox   ? `far ${calibrationViews.far.brightness.toFixed(4)}`     : null,
+    ].filter(Boolean).join(", ");
+    brightnessValue = [calibrationViews.close.brightness, calibrationViews.far.brightness]
+      .filter(v => v > 0)
+      .reduce((total, value, _i, values) => total + value / values.length, 0);
+    brightnessValueEl.textContent = brightnessParts || "0";
+    updateCalibrationStats();
+  }
+
+  function boxToTargetSize(box, view) {
+    return {
+      x:      Math.round((box.x      / view.canvas.width)  * profileTargetSize),
+      y:      Math.round((box.y      / view.canvas.height) * profileTargetSize),
+      width:  Math.round((box.width  / view.canvas.width)  * profileTargetSize),
+      height: Math.round((box.height / view.canvas.height) * profileTargetSize),
+    };
+  }
+
+  function readDistance(input, label) {
+    const value = Number(input.value);
+    if (!Number.isFinite(value) || value <= 0)
+      throw new Error(`Enter a valid ${label} distance in cm.`);
+    return value;
+  }
+
+  function captureDistanceSample(input, label) {
+    const view = calibrationViews[label];
+    if (!view.image) throw new Error(`Load the ${label} distance image first.`);
+    if (!view.activeBox || view.activeBox.width < 2 || view.activeBox.height < 2)
+      throw new Error(`Draw the ${label} bounding box first.`);
+    const box = boxToTargetSize(view.activeBox, view);
+    return {
+      distance_cm:   readDistance(input, label),
+      width:         box.width,
+      height:        box.height,
+      brightness:    view.brightness,
+      source_width:  view.image.naturalWidth,
+      source_height: view.image.naturalHeight,
+      bbox_x:        box.x,
+      bbox_y:        box.y,
+    };
+  }
+
+  function sampleText(sample) {
+    if (!sample) return "none";
+    return `${sample.width} x ${sample.height}px at ${sample.distance_cm}cm`;
+  }
+
+  function interpolatePixelSize(close, far, wantedDistance) {
+    const closeInverse  = 1 / close.distance_cm;
+    const farInverse    = 1 / far.distance_cm;
+    const wantedInverse = 1 / wantedDistance;
+    if (Math.abs(closeInverse - farInverse) < 1e-9)
+      throw new Error("Close and far distances must be different.");
+    const solve = (closePixels, farPixels) => {
+      const slope     = (closePixels - farPixels) / (closeInverse - farInverse);
+      const intercept = closePixels - slope * closeInverse;
+      return Math.max(2, Math.min(profileTargetSize, Math.round(slope * wantedInverse + intercept)));
+    };
+    return { width: solve(close.width, far.width), height: solve(close.height, far.height) };
+  }
+
+  function readWantedRange() {
+    const minDistance = readDistance(wantedDistanceMinInput, "wanted min");
+    const maxDistance = readDistance(wantedDistanceMaxInput, "wanted max");
+    if (minDistance > maxDistance)
+      throw new Error("Wanted min distance must be ≤ wanted max distance.");
+    return { minDistance, maxDistance };
+  }
+
+  function computedWantedRange() {
+    if (!closeSample || !farSample) return null;
+    const { minDistance, maxDistance } = readWantedRange();
+    const minSize = interpolatePixelSize(closeSample, farSample, maxDistance);
+    const maxSize = interpolatePixelSize(closeSample, farSample, minDistance);
+    return {
+      min_distance_cm: minDistance,
+      max_distance_cm: maxDistance,
+      min_width:  minSize.width,
+      min_height: minSize.height,
+      max_width:  maxSize.width,
+      max_height: maxSize.height,
+      width:  Math.round((minSize.width  + maxSize.width)  / 2),
+      height: Math.round((minSize.height + maxSize.height) / 2),
+    };
+  }
+
+  function updateCalibrationStats() {
+    closeStatsEl.textContent = sampleText(closeSample);
+    farStatsEl.textContent   = sampleText(farSample);
+    try {
+      const wanted = computedWantedRange();
+      wantedStatsEl.textContent = wanted
+        ? `${wanted.min_width}-${wanted.max_width} x ${wanted.min_height}-${wanted.max_height}px at ${wanted.min_distance_cm}-${wanted.max_distance_cm}cm`
+        : "none";
+    } catch {
+      wantedStatsEl.textContent = "none";
+    }
+  }
+
+  // ── Upload form ────────────────────────────────────────────────
+  uploadForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!videosInput.files.length) {
+      statusEl.textContent = "Choose a folder containing videos.";
+      return;
+    }
+    const formData = new FormData();
+    for (const file of videosInput.files) {
+      formData.append("videos", file, file.webkitRelativePath || file.name);
+    }
+    try {
+      setBusy(true);
+      statusEl.textContent = "Uploading videos…";
+      await postForm("/upload", formData);
+      await refreshProgress();
+    } catch (error) {
+      statusEl.textContent = error.message;
+    } finally {
+      setBusy(false);
+    }
+  });
+
+  startButton.addEventListener("click", async () => {
+    try {
+      const formData = new FormData();
+      formData.append("images_per_video", imagesPerVideoInput.value || "108");
+      await postForm("/start", formData);
+      await refreshProgress();
+    } catch (error) {
+      statusEl.textContent = error.message;
+    }
+  });
+
+  synthesizeButton.addEventListener("click", async () => {
+    try {
+      const formData = new FormData();
+      formData.append("total_images", totalImagesInput.value || "100");
+      await postForm("/synthesize", formData);
+      await refreshProgress();
+    } catch (error) {
+      statusEl.textContent = error.message;
+    }
+  });
+
+  clearButton.addEventListener("click", async () => {
+    try {
+      await postForm("/clear", new FormData());
+      frameCountWarning.classList.remove("visible");
+      await refreshProgress();
+    } catch (error) {
+      statusEl.textContent = error.message;
+    }
+  });
+
+  // ── Calibration image loading ──────────────────────────────────
+  function loadCalibrationImage(input, role) {
+    const file = input.files[0];
+    if (!file) return;
+    const view  = calibrationViews[role];
+    const image = new Image();
+    image.onload = () => {
+      view.image = image;
+      const maxWidth = 960;
+      view.displayScale  = Math.min(1, maxWidth / image.naturalWidth);
+      view.canvas.width  = Math.max(1, Math.round(image.naturalWidth  * view.displayScale));
+      view.canvas.height = Math.max(1, Math.round(image.naturalHeight * view.displayScale));
+      view.activeBox = null;
+      view.draftBox  = null;
+      view.brightness = 0;
+      if (role === "close") closeSample = null;
+      else farSample = null;
+      drawCanvas(view);
+      updateStats();
+      URL.revokeObjectURL(image.src);
+    };
+    image.src = URL.createObjectURL(file);
+  }
+
+  closeImageInput.addEventListener("change", () => loadCalibrationImage(closeImageInput, "close"));
+  farImageInput.addEventListener("change",   () => loadCalibrationImage(farImageInput,   "far"));
+
+  function bindCanvas(view) {
+    view.canvas.addEventListener("pointerdown", (event) => {
+      if (!view.image) return;
+      view.isDrawing = true;
+      view.canvas.setPointerCapture(event.pointerId);
+      const point = canvasPoint(event, view);
+      view.draftBox = { start: point, end: point };
+    });
+    view.canvas.addEventListener("pointermove", (event) => {
+      if (!view.isDrawing || !view.draftBox) return;
+      view.draftBox.end = canvasPoint(event, view);
+      const box = normalizedBox(view.draftBox.start, view.draftBox.end, view);
+      view.draftBox = { ...view.draftBox, ...box };
+      drawCanvas(view);
+    });
+    view.canvas.addEventListener("pointerup", (event) => {
+      if (!view.isDrawing || !view.draftBox) return;
+      view.isDrawing = false;
+      view.draftBox.end = canvasPoint(event, view);
+      view.activeBox = normalizedBox(view.draftBox.start, view.draftBox.end, view);
+      view.draftBox  = null;
+      drawCanvas(view);
+      updateStats();
+    });
+  }
+
+  bindCanvas(calibrationViews.close);
+  bindCanvas(calibrationViews.far);
+  drawCanvas(calibrationViews.close);
+  drawCanvas(calibrationViews.far);
+
+  clearBoxButton.addEventListener("click", () => {
+    for (const view of Object.values(calibrationViews)) {
+      view.activeBox = null;
+      view.draftBox  = null;
+      view.brightness = 0;
+      drawCanvas(view);
+    }
+    closeSample = null;
+    farSample   = null;
+    updateStats();
+  });
+
+  setCloseButton.addEventListener("click", () => {
+    try {
+      closeSample = captureDistanceSample(closeDistanceInput, "close");
+      updateCalibrationStats();
+    } catch (error) {
+      statusEl.textContent = error.message;
+    }
+  });
+
+  setFarButton.addEventListener("click", () => {
+    try {
+      farSample = captureDistanceSample(farDistanceInput, "far");
+      updateCalibrationStats();
+    } catch (error) {
+      statusEl.textContent = error.message;
+    }
+  });
+
+  wantedDistanceMinInput.addEventListener("input", updateCalibrationStats);
+  wantedDistanceMaxInput.addEventListener("input", updateCalibrationStats);
+
+  saveProfileButton.addEventListener("click", async () => {
+    try {
+      if (!classSelect.value) throw new Error("Select a class first.");
+      if (!closeSample || !farSample) throw new Error("Set both close and far calibration samples first.");
+      const wantedSize = computedWantedRange();
+      const brightness = (closeSample.brightness + farSample.brightness) / 2;
+      const data = await postJson("/object-profile", {
+        class_name:        classSelect.value,
+        width:             wantedSize.width,
+        height:            wantedSize.height,
+        min_width:         wantedSize.min_width,
+        max_width:         wantedSize.max_width,
+        min_height:        wantedSize.min_height,
+        max_height:        wantedSize.max_height,
+        source_width:      closeSample.source_width,
+        source_height:     closeSample.source_height,
+        target_width:      profileTargetSize,
+        target_height:     profileTargetSize,
+        bbox_x:            closeSample.bbox_x,
+        bbox_y:            closeSample.bbox_y,
+        close_sample:      closeSample,
+        far_sample:        farSample,
+        wanted_distance_cm: (wantedSize.min_distance_cm + wantedSize.max_distance_cm) / 2,
+        min_distance_cm:   wantedSize.min_distance_cm,
+        max_distance_cm:   wantedSize.max_distance_cm,
+        brightness,
+        background_categories: Array.from(
+          document.querySelectorAll('#bgCategoryCheckboxes input[name="bg_category"]:checked')
+        ).map(cb => cb.value),
+      });
+      _objectProfiles[data.class_name] = data.profile;
+      statusEl.textContent = `Saved ${data.class_name}: ${wantedSize.min_width}-${wantedSize.max_width} x ${wantedSize.min_height}-${wantedSize.max_height}px @ ${profileTargetSize}x${profileTargetSize}`;
+      await refreshProgress();
+    } catch (error) {
+      statusEl.textContent = error.message;
+    }
+  });
+
+  // ── Progress polling ───────────────────────────────────────────
+  async function refreshProgress() {
+    const response = await fetch("/progress");
+    renderProgress(await response.json());
+  }
+
+  const eventSource = new EventSource("/events");
+  eventSource.onmessage = (event) => renderProgress(JSON.parse(event.data));
+  eventSource.onerror = () => { setTimeout(refreshProgress, 500); };
+  setInterval(refreshProgress, 1000);
+
+  // ── Paths panel ────────────────────────────────────────────────
+  async function refreshPaths() {
+    try {
+      const r = await fetch("/config");
+      const _cfg = await r.json();
+    } catch (_) {}
+    // Paths are server-side constants — fetch them via a dedicated endpoint or show placeholders
+    const base = window.location.origin;
+    document.getElementById("pathVideos").textContent  = "Videos: dataset_video/";
+    document.getElementById("pathFrames").textContent  = "Frames: dataset_image/";
+    document.getElementById("pathRembg").textContent   = "Removed background: dataset_rembg/";
+    document.getElementById("pathMasks").textContent   = "Masks: dataset_mask/";
+    document.getElementById("pathSynth").textContent   = "Synthesized images: data/sythesized_data/";
+    document.getElementById("pathLabels").textContent  = "YOLO labels: data/labels/";
+    document.getElementById("pathYaml").textContent    = "YOLO YAML: data/sythesized_data.yaml";
+  }
+
+  // ── Settings form ──────────────────────────────────────────────
+  const phaseLabels = {
+    phase0: "Phase 0 — Data Preparation",
+    phase1: "Phase 1 — Validation",
+    phase2: "Phase 2 — Synthesis",
+    phase3: "Phase 3 — Training",
+    phase4: "Phase 4 — Evaluation",
+  };
+
+  async function loadSettingsForm() {
+    const container = document.getElementById("settingsContent");
+    try {
+      const config = await fetch("/config").then(r => r.json());
+      renderSettingsForm(config, container);
+    } catch (err) {
+      container.innerHTML = `<p style="color:#c92a2a;font-size:13px;">Failed to load config: ${err.message}</p>`;
+    }
+  }
+
+  function renderSettingsForm(config, container) {
+    container.innerHTML = "";
+    for (const [section, params] of Object.entries(config)) {
+      if (!params || typeof params !== "object" || Array.isArray(params)) continue;
+
+      const sectionDiv = document.createElement("div");
+      sectionDiv.className = "settings-section";
+
+      const heading = document.createElement("h3");
+      heading.className = "settings-heading";
+      heading.textContent = phaseLabels[section] || section;
+      sectionDiv.appendChild(heading);
+
+      const grid = document.createElement("div");
+      grid.className = "settings-grid";
+
+      for (const [key, value] of Object.entries(params)) {
+        const type = Array.isArray(value) ? "array" : typeof value;
+        const fieldDiv = document.createElement("div");
+        fieldDiv.className = "settings-field";
+
+        const label = document.createElement("label");
+        label.htmlFor = `cfg-${section}-${key}`;
+        label.textContent = key.replace(/_/g, " ");
+
+        const input = document.createElement("input");
+        input.id = `cfg-${section}-${key}`;
+        input.className = "settings-input";
+        input.dataset.section = section;
+        input.dataset.key = key;
+        input.dataset.type = type;
+
+        if (type === "number") {
+          input.type = "number";
+          input.value = value;
+          input.step = Number.isInteger(value) ? "1" : "0.001";
+        } else if (type === "array") {
+          input.type = "text";
+          input.value = value.join(", ");
+        } else {
+          input.type = "text";
+          input.value = value;
+        }
+
+        fieldDiv.appendChild(label);
+        fieldDiv.appendChild(input);
+        grid.appendChild(fieldDiv);
+      }
+
+      sectionDiv.appendChild(grid);
+      container.appendChild(sectionDiv);
+    }
+  }
+
+  // Keys that must be > 0 (positive integers/floats)
+  const POSITIVE_KEYS = new Set([
+    "images_per_video", "target_frame_count", "ssim_dedup_threshold",
+    "frame_count_tolerance_pct", "expected_images_per_class", "min_backgrounds_per_category",
+    "max_objects_per_image", "train_pct", "val_pct",
+    "epochs", "batch", "imgsz", "patience", "sample_fps", "confidence_threshold",
+  ]);
+  // Keys that must be in range [0, 100]
+  const PCT_KEYS = new Set([
+    "blur_max_pct", "brightness_variation_pct", "contrast_variation_pct",
+    "out_of_frame_pct", "overlap_threshold_pct", "train_pct", "val_pct", "test_pct",
+    "frame_count_tolerance_pct",
+  ]);
+  // String fields that must be non-empty
+  const NONEMPTY_KEYS = new Set(["model", "device", "name", "project", "placement_mode"]);
+
+  function validateSettingsInputs(inputs) {
+    const errors = [];
+    for (const input of inputs) {
+      const { section, key, type } = input.dataset;
+      if (!section || !key) continue;
+      input.style.borderColor = "";
+      const raw = input.value.trim();
+      if (type === "number") {
+        const num = parseFloat(raw);
+        if (isNaN(num)) {
+          errors.push(`${section}.${key}: must be a number`);
+          input.style.borderColor = "#c92a2a";
+        } else if (POSITIVE_KEYS.has(key) && num <= 0) {
+          errors.push(`${section}.${key}: must be > 0`);
+          input.style.borderColor = "#c92a2a";
+        } else if (PCT_KEYS.has(key) && (num < 0 || num > 100)) {
+          errors.push(`${section}.${key}: must be 0–100`);
+          input.style.borderColor = "#c92a2a";
+        }
+      } else if (type === "string" && NONEMPTY_KEYS.has(key) && raw === "") {
+        errors.push(`${section}.${key}: must not be empty`);
+        input.style.borderColor = "#c92a2a";
+      }
+    }
+    return errors;
+  }
+
+  document.getElementById("saveSettingsBtn").addEventListener("click", async () => {
+    const inputs = document.querySelectorAll("#settingsContent input");
+    const msgEl = document.getElementById("settingsMsg");
+
+    const validationErrors = validateSettingsInputs(inputs);
+    if (validationErrors.length > 0) {
+      msgEl.className = "settings-msg error";
+      msgEl.textContent = validationErrors[0];
+      msgEl.style.display = "block";
+      setTimeout(() => { msgEl.style.display = "none"; }, 4000);
+      return;
+    }
+
+    const config = {};
+    for (const input of inputs) {
+      const { section, key, type } = input.dataset;
+      if (!section || !key) continue;
+      if (!config[section]) config[section] = {};
+      let val = input.value.trim();
+      if (type === "number") {
+        val = parseFloat(val);
+        if (isNaN(val)) val = 0;
+      } else if (type === "array") {
+        val = val.split(",").map(s => s.trim()).filter(s => s.length > 0);
+      }
+      config[section][key] = val;
+    }
+    try {
+      const response = await fetch("/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(config),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Save failed");
+      msgEl.className = "settings-msg success";
+      msgEl.textContent = "Settings saved successfully.";
+      msgEl.style.display = "block";
+    } catch (err) {
+      msgEl.className = "settings-msg error";
+      msgEl.textContent = `Error: ${err.message}`;
+      msgEl.style.display = "block";
+    }
+    setTimeout(() => { msgEl.style.display = "none"; }, 3500);
+  });
+
+  // ── Phase 0: class status + review grid ───────────────────────
+
+  const STATUS_COLORS = {
+    "Pending":    { bg: "#e4e7eb", color: "#627d98" },
+    "Processing": { bg: "#fff3cd", color: "#856404" },
+    "In Review":  { bg: "#cfe2ff", color: "#084298" },
+    "Done":       { bg: "#d1e7dd", color: "#0a3622" },
+  };
+
+  let currentReviewClass = null;
+
+  async function refreshPhase0Status() {
+    try {
+      const resp = await fetch("/phase0/status");
+      if (!resp.ok) return;
+      const statuses = await resp.json();
+      renderClassStatuses(statuses);
+    } catch (_) {}
+  }
+
+  function renderClassStatuses(statuses) {
+    const container = document.getElementById("classStatusList");
+    const entries = Object.entries(statuses);
+    if (entries.length === 0) {
+      container.innerHTML =
+        '<p style="color:#9aa5b4;font-size:13px;">No classes detected. Upload and process a video folder first.</p>';
+      return;
+    }
+    container.innerHTML = "";
+    for (const [cls, status] of entries) {
+      const item = document.createElement("div");
+      item.className = "class-status-item";
+
+      const nameSpan = document.createElement("span");
+      nameSpan.className = "class-name-text";
+      nameSpan.textContent = cls;
+
+      const badge = document.createElement("span");
+      badge.className = "status-badge";
+      badge.textContent = status;
+      const colors = STATUS_COLORS[status] || STATUS_COLORS["Pending"];
+      badge.style.background = colors.bg;
+      badge.style.color = colors.color;
+
+      const right = document.createElement("div");
+      right.className = "status-right";
+      right.appendChild(badge);
+
+      if (status === "In Review" || status === "Done") {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "secondary status-btn";
+        btn.textContent = "Review";
+        btn.addEventListener("click", () => loadReview(cls));
+        right.appendChild(btn);
+      }
+
+      item.appendChild(nameSpan);
+      item.appendChild(right);
+      container.appendChild(item);
+    }
+  }
+
+  async function loadReview(className) {
+    const reviewPanel    = document.getElementById("reviewPanel");
+    const reviewGrid     = document.getElementById("reviewGrid");
+    const reviewClassEl  = document.getElementById("reviewClassName");
+    const reviewCountEl  = document.getElementById("reviewFileCount");
+    const acceptBtn      = document.getElementById("acceptButton");
+    const acceptResult   = document.getElementById("acceptResult");
+
+    currentReviewClass = className;
+    reviewClassEl.textContent = className;
+    reviewCountEl.textContent = "";
+    acceptBtn.disabled = true;
+    acceptResult.textContent = "";
+    acceptResult.className = "accept-result";
+    reviewGrid.innerHTML =
+      '<p style="color:#9aa5b4;padding:24px 0;text-align:center;grid-column:1/-1;">Loading frames…</p>';
+    reviewPanel.style.display = "block";
+    reviewPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+    try {
+      const resp = await fetch(`/phase0/review/${encodeURIComponent(className)}`);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || "Failed to load review");
+
+      reviewCountEl.textContent =
+        `(${data.total_files} total frames, showing ${data.pairs.length})`;
+      reviewGrid.innerHTML = "";
+
+      for (const pair of data.pairs) {
+        const thumb = document.createElement("div");
+        thumb.className = "review-thumb";
+
+        const img = document.createElement("img");
+        img.src = `data:image/jpeg;base64,${pair.image_b64}`;
+        img.alt = pair.filename;
+        img.loading = "lazy";
+
+        const lbl = document.createElement("div");
+        lbl.className = "review-thumb-label";
+        lbl.textContent = pair.filename;
+
+        thumb.appendChild(img);
+        thumb.appendChild(lbl);
+        reviewGrid.appendChild(thumb);
+      }
+
+      acceptBtn.disabled = false;
+    } catch (err) {
+      reviewGrid.innerHTML =
+        `<p style="color:#c92a2a;padding:24px 0;text-align:center;grid-column:1/-1;">${err.message}</p>`;
+    }
+  }
+
+  document.getElementById("acceptButton").addEventListener("click", async () => {
+    if (!currentReviewClass) return;
+    const acceptBtn    = document.getElementById("acceptButton");
+    const acceptResult = document.getElementById("acceptResult");
+    acceptBtn.disabled = true;
+    acceptResult.className = "accept-result";
+    acceptResult.textContent = "Accepting…";
+
+    try {
+      const resp = await fetch(`/phase0/accept/${encodeURIComponent(currentReviewClass)}`, {
+        method: "POST",
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || "Accept failed");
+
+      acceptResult.className = "accept-result success";
+      acceptResult.innerHTML =
+        `<strong>✓ Accepted</strong> — ${data.copied_images} image(s) and ` +
+        `${data.copied_masks} mask(s) sent to Phase 1 (data/phase1/${data.class_name}/).<br>` +
+        `<small style="color:#52606d;">Report saved · ${data.report.timestamp}</small>`;
+
+      await refreshPhase0Status();
+    } catch (err) {
+      acceptResult.className = "accept-result error";
+      acceptResult.textContent = `Error: ${err.message}`;
+      acceptBtn.disabled = false;
+    }
+  });
+
+  document.getElementById("closeReviewButton").addEventListener("click", () => {
+    document.getElementById("reviewPanel").style.display = "none";
+    currentReviewClass = null;
+  });
+
+  // Poll phase0 status every 3 s so badges stay fresh during processing
+  setInterval(refreshPhase0Status, 3000);
+
+  // ── Phase 1 Validation ─────────────────────────────────────────
+  function checkIcon(ok, warn) {
+    if (ok)   return `<span class="check-icon ok">✓</span>`;
+    if (warn) return `<span class="check-icon warn">⚠</span>`;
+    return     `<span class="check-icon error">✗</span>`;
+  }
+
+  function renderPhase1Results(data) {
+    const resultDiv = document.getElementById("phase1ValidationResult");
+    const summaryEl = document.getElementById("phase1Summary");
+    const cardsEl   = document.getElementById("phase1Cards");
+    resultDiv.style.display = "";
+
+    const bgOk = data.backgrounds_ok;
+    summaryEl.innerHTML =
+      `<span><strong>${data.total_classes}</strong> class${data.total_classes !== 1 ? "es" : ""} found</span>` +
+      `<span>Backgrounds: <strong>${data.backgrounds}</strong> / ${data.min_backgrounds} min ` +
+      `${checkIcon(bgOk, false)}</span>`;
+
+    cardsEl.innerHTML = "";
+    if (data.classes.length === 0) {
+      cardsEl.innerHTML = `<p style="color:#9aa5b4;font-size:13px;">No accepted classes found. Complete Phase 0 first.</p>`;
+      return;
+    }
+
+    data.classes.forEach(cls => {
+      const badgeCls = cls.overall === "ok" ? "badge-ok" : cls.overall === "warn" ? "badge-warn" : "badge-error";
+      const badgeLabel = cls.overall === "ok" ? "OK" : cls.overall === "warn" ? "Warning" : "Error";
+
+      const imageCountOk = cls.total_images >= cls.target_images;
+      const imageCountWarn = cls.total_images > 0 && cls.total_images < cls.target_images;
+
+      const tiltsOk = cls.convention_ok && Object.values(cls.tilt_counts).every(v => v > 0);
+      const tiltsWarn = cls.convention_ok && !tiltsOk;
+
+      const renameBtn = !cls.convention_ok
+        ? `<button class="btn status-btn val-rename-btn" data-rename="${cls.class_name}">Rename to Convention</button>`
+        : "";
+
+      const tiltDetail = cls.convention_ok
+        ? `00°: ${cls.tilt_counts["00"]}  30°: ${cls.tilt_counts["30"]}  45°: ${cls.tilt_counts["45"]}`
+        : `${cls.bad_name_count} file(s) not following convention`;
+
+      const card = document.createElement("div");
+      card.className = "validation-card";
+      card.innerHTML = `
+        <div class="validation-card-header">
+          <span class="cls-name">${cls.class_name}</span>
+          <span class="badge ${badgeCls}">${badgeLabel}</span>
+        </div>
+        <div class="validation-card-body">
+          <div class="check-row">
+            ${checkIcon(imageCountOk, imageCountWarn)}
+            Images: <strong>${cls.total_images}</strong> / ${cls.target_images} target
+          </div>
+          <div class="check-row">
+            ${checkIcon(cls.convention_ok, false)}
+            Naming convention ${cls.convention_ok ? "OK" : `— ${cls.bad_name_count} non-conforming files`}
+            ${renameBtn}
+          </div>
+          <div class="check-row">
+            ${checkIcon(tiltsOk, tiltsWarn)}
+            Tilt angles: ${tiltDetail}
+          </div>
+          <div class="check-row">
+            ${checkIcon(cls.masks_ok, false)}
+            Masks: <strong>${cls.total_masks}</strong> found
+          </div>
+          <div class="check-row">
+            ${checkIcon(cls.mask_integrity_ok, false)}
+            Mask integrity ${cls.mask_integrity_ok ? "OK" : `— ${cls.bad_mask_samples.join(", ")} have no object pixels`}
+          </div>
+        </div>`;
+      cardsEl.appendChild(card);
+
+      const renameEl = card.querySelector("[data-rename]");
+      if (renameEl) {
+        renameEl.addEventListener("click", async () => {
+          renameEl.disabled = true;
+          renameEl.textContent = "Renaming…";
+          try {
+            const r = await fetch(`/phase1/rename/${cls.class_name}`, { method: "POST" });
+            const d = await r.json();
+            if (!r.ok) throw new Error(d.error || "Rename failed");
+            renameEl.textContent = `✓ Renamed ${d.renamed_images} files`;
+            renameEl.style.background = "#d3f9d8";
+            renameEl.style.color = "#1b7e3a";
+            setTimeout(() => validatePhase1(), 600);
+          } catch (err) {
+            renameEl.textContent = err.message;
+            renameEl.disabled = false;
+          }
+        });
+      }
+    });
+  }
+
+  async function validatePhase1() {
+    const btn = document.getElementById("validateBtn");
+    btn.disabled = true;
+    btn.textContent = "Validating…";
+    try {
+      const r = await fetch("/phase1/validate");
+      const d = await r.json();
+      renderPhase1Results(d);
+    } catch (err) {
+      document.getElementById("phase1ValidationResult").style.display = "";
+      document.getElementById("phase1Cards").innerHTML =
+        `<p style="color:#c92a2a;font-size:13px;">Validation failed: ${err.message}</p>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Validate Dataset";
+    }
+  }
+
+  document.getElementById("validateBtn").addEventListener("click", validatePhase1);
+
+  // ── Phase 2 ────────────────────────────────────────────────────
+  function renderPhase2Config(cfg) {
+    const p2 = cfg.phase2 || {};
+    const el = document.getElementById("phase2ConfigSummary");
+    if (!el) return;
+    const items = [
+      ["Placement",     p2.placement_mode  || "random"],
+      ["Max objects",   p2.max_objects_per_image ?? 15],
+      ["Overlap thr.",  (p2.overlap_threshold_pct ?? 20) + "%"],
+      ["Out-of-frame",  (p2.out_of_frame_pct ?? 10) + "%"],
+      ["Brightness ±",  (p2.brightness_variation_pct ?? 10) + "%"],
+      ["Contrast ±",    (p2.contrast_variation_pct ?? 20) + "%"],
+      ["Blur max",      (p2.blur_max_pct ?? 15) + "%"],
+    ];
+    el.innerHTML = items.map(([k, v]) =>
+      `<span><span style="color:#9aa5b4">${k}:</span> <strong>${v}</strong></span>`
+    ).join("");
+  }
+
+  function updateSplitPreview() {
+    const total = parseInt(document.getElementById("totalImages").value) || 0;
+    fetch("/config").then(r => r.json()).then(cfg => {
+      const p2 = cfg.phase2 || {};
+      const trainPct = p2.train_pct ?? 80;
+      const valPct   = p2.val_pct   ?? 15;
+      const testPct  = p2.test_pct  ?? 5;
+      const tot = Math.max(1, trainPct + valPct + testPct);
+      const train = Math.max(1, Math.round(total * trainPct / tot));
+      const val   = Math.max(1, Math.round(total * valPct   / tot));
+      const test  = Math.max(0, total - train - val);
+      const el = document.getElementById("splitPreview");
+      if (el) el.textContent = `→ ${train} train / ${val} val / ${test} test`;
+    }).catch(() => {});
+  }
+
+  document.getElementById("totalImages").addEventListener("input", updateSplitPreview);
+
+  document.getElementById("previewBtn").addEventListener("click", async () => {
+    const btn = document.getElementById("previewBtn");
+    const resultDiv  = document.getElementById("previewResult");
+    const errorDiv   = document.getElementById("previewError");
+    const metaEl     = document.getElementById("previewMeta");
+    const imgEl      = document.getElementById("previewImg");
+    btn.disabled = true;
+    btn.textContent = "Generating…";
+    resultDiv.style.display = "none";
+    errorDiv.style.display  = "none";
+    try {
+      const r = await fetch("/phase2/preview", { method: "POST" });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "Preview failed");
+      imgEl.src = `data:image/jpeg;base64,${d.image_b64}`;
+      metaEl.textContent = `Classes: ${d.classes.join(", ")} — ${d.objects_placed} object(s) placed`;
+      resultDiv.style.display = "";
+    } catch (err) {
+      errorDiv.textContent = err.message;
+      errorDiv.style.display = "";
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Generate Preview";
+    }
+  });
+
+  function loadGenerationReport() {
+    fetch("/config").then(() => {
+      // Check if generation_report.json exists via a dedicated endpoint (we read it on demand)
+    }).catch(() => {});
+  }
+
+  // Show generation report after synthesis completes
+  const _p2OrigRenderProgress = renderProgress;
+  // Instead of wrapping (which causes hoisting issues), we hook via the existing
+  // renderProgress that already calls refreshPhase0Status on Complete.
+  // The report panel is refreshed when the user is on phase2 tab via tab activation.
+  function activatePhase2Tab() {
+    updateSplitPreview();
+    fetch("/config").then(r => r.json()).then(renderPhase2Config).catch(() => {});
+  }
+
+  // ── Phase 3 ────────────────────────────────────────────────────
+  let phase3PollTimer = null;
+
+  function renderPhase3Config(cfg) {
+    const p3 = (cfg || {}).phase3 || {};
+    const el = document.getElementById("phase3ConfigSummary");
+    if (!el) return;
+    const items = [
+      ["Model",   p3.model   || "yolo11n.pt"],
+      ["Epochs",  p3.epochs  ?? 100],
+      ["Batch",   p3.batch   ?? 16],
+      ["Imgsz",   p3.imgsz   ?? 640],
+      ["Device",  p3.device  ?? "0"],
+      ["Exc. thr", p3.cls_loss_excellent  ?? 0.5],
+      ["Acc. thr", p3.cls_loss_acceptable ?? 1.0],
+    ];
+    el.innerHTML = items.map(([k, v]) =>
+      `<span><span style="color:#9aa5b4">${k}:</span> <strong>${v}</strong></span>`
+    ).join("");
+  }
+
+  function renderPhase3Status(d) {
+    const epochFill = document.getElementById("phase3EpochFill");
+    const epochMeta = document.getElementById("phase3EpochMeta");
+    const trainBtn  = document.getElementById("trainButton");
+    const stopBtn   = document.getElementById("stopTrainButton");
+    const liveEl    = document.getElementById("phase3ClsLossLive");
+    const resultsEl = document.getElementById("phase3Results");
+    const qualityEl = document.getElementById("phase3Quality");
+    const clsEl     = document.getElementById("phase3ClsLoss");
+    const dlBtn     = document.getElementById("downloadBestBtn");
+    const errEl     = document.getElementById("phase3Error");
+
+    if (trainBtn) trainBtn.disabled = d.running;
+    if (stopBtn)  stopBtn.disabled  = !d.running;
+
+    if (d.total_epochs > 0) {
+      const pct = Math.round(d.epoch / d.total_epochs * 100);
+      if (epochFill) epochFill.style.width = `${pct}%`;
+      if (epochMeta) epochMeta.innerHTML =
+        `<span>Epoch <strong>${d.epoch}</strong> / ${d.total_epochs}</span><span>${pct}%</span>`;
+    } else {
+      if (epochFill) epochFill.style.width = "0%";
+      if (epochMeta) epochMeta.innerHTML = `<span>${d.stage || "Not started"}</span><span>0%</span>`;
+    }
+
+    if (liveEl) {
+      liveEl.textContent = d.current_cls_loss != null
+        ? `Live cls_loss: ${Number(d.current_cls_loss).toFixed(4)}`
+        : "";
+    }
+
+    if (d.stage === "Complete" && d.best_pt) {
+      if (resultsEl) resultsEl.style.display = "";
+      if (clsEl) clsEl.textContent = d.cls_loss != null ? Number(d.cls_loss).toFixed(4) : "—";
+      const quality = d.quality || "Unknown";
+      const qMap = { Excellent: "quality-excellent", Acceptable: "quality-acceptable", Poor: "quality-poor" };
+      if (qualityEl) {
+        qualityEl.className = `quality-badge ${qMap[quality] || "quality-unknown"}`;
+        qualityEl.textContent = quality;
+      }
+      if (dlBtn) dlBtn.disabled = false;
+      if (phase3PollTimer) { clearInterval(phase3PollTimer); phase3PollTimer = null; }
+      if (trainBtn) trainBtn.textContent = "Start Training";
+    }
+
+    if (d.stage === "Error") {
+      if (errEl && d.error) { errEl.textContent = d.error; errEl.style.display = ""; }
+      if (phase3PollTimer) { clearInterval(phase3PollTimer); phase3PollTimer = null; }
+      if (trainBtn) { trainBtn.disabled = false; trainBtn.textContent = "Start Training"; }
+    }
+  }
+
+  async function refreshPhase3Status() {
+    try {
+      const r = await fetch("/phase3/status");
+      if (r.ok) renderPhase3Status(await r.json());
+    } catch (_) {}
+  }
+
+  function activatePhase3Tab() {
+    refreshPhase3Status();
+    fetch("/config").then(r => r.json()).then(renderPhase3Config).catch(() => {});
+  }
+
+  document.getElementById("trainButton").addEventListener("click", async () => {
+    const btn = document.getElementById("trainButton");
+    const errEl = document.getElementById("phase3Error");
+    if (errEl) errEl.style.display = "none";
+    btn.disabled = true;
+    btn.textContent = "Starting…";
+    try {
+      const r = await fetch("/phase3/train", { method: "POST" });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "Start failed");
+      btn.textContent = "Training…";
+      if (phase3PollTimer) clearInterval(phase3PollTimer);
+      phase3PollTimer = setInterval(refreshPhase3Status, 2000);
+    } catch (err) {
+      if (errEl) { errEl.textContent = err.message; errEl.style.display = ""; }
+      btn.disabled = false;
+      btn.textContent = "Start Training";
+    }
+  });
+
+  document.getElementById("stopTrainButton").addEventListener("click", async () => {
+    try { await fetch("/phase3/stop", { method: "POST" }); } catch (_) {}
+  });
+
+  document.getElementById("downloadBestBtn").addEventListener("click", () => {
+    window.location.href = "/phase3/best_pt";
+  });
+
+  // ── Phase 4 ────────────────────────────────────────────────────
+  let phase4PollTimer = null;
+
+  document.getElementById("phase4UsePhase3Model").addEventListener("change", function() {
+    document.getElementById("phase4ModelRow").style.display = this.checked ? "none" : "";
+  });
+
+  function renderPhase4Status(d) {
+    const startBtn   = document.getElementById("phase4StartBtn");
+    const stopBtn    = document.getElementById("phase4StopBtn");
+    const metaEl     = document.getElementById("phase4ProgressMeta");
+    const fillEl4    = document.getElementById("phase4ProgressFill");
+    const detCount   = document.getElementById("phase4DetCount");
+    const resultsEl  = document.getElementById("phase4Results");
+    const summaryDiv = document.getElementById("phase4SummaryDiv");
+    const errEl      = document.getElementById("phase4Error");
+
+    if (startBtn) startBtn.disabled = d.running;
+    if (stopBtn)  stopBtn.disabled  = !d.running;
+
+    if (d.total_frames > 0) {
+      const pct = Math.round(d.frame / d.total_frames * 100);
+      if (fillEl4) fillEl4.style.width = `${pct}%`;
+      if (metaEl) metaEl.innerHTML =
+        `<span>Sample <strong>${d.frame}</strong> / ${d.total_frames}</span><span>${pct}%</span>`;
+    } else {
+      if (fillEl4) fillEl4.style.width = "0%";
+      if (metaEl) metaEl.innerHTML = `<span>${d.stage || "Not started"}</span><span>0%</span>`;
+    }
+
+    if (detCount) {
+      detCount.textContent = d.results_count > 0
+        ? `${d.results_count} detection(s) found so far`
+        : "";
+    }
+
+    if (d.stage === "Complete" && d.summary) {
+      if (resultsEl) resultsEl.style.display = "";
+      if (summaryDiv) {
+        const s = d.summary;
+        const classRows = Object.entries(s.per_class || {})
+          .sort((a, b) => b[1] - a[1])
+          .map(([cls, count]) =>
+            `<tr style="border-bottom:1px solid #e4e7eb;">
+              <td style="padding:7px 12px;font-weight:600;">${cls}</td>
+              <td style="padding:7px 12px;">${count}</td>
+            </tr>`
+          ).join("");
+        summaryDiv.innerHTML =
+          `<div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:14px;font-size:13px;color:#3e4c5e;">
+            <span>Total detections: <strong>${s.total_detections}</strong></span>
+            <span>Samples taken: <strong>${s.seconds_sampled}</strong></span>
+            <span>Video duration: <strong>${s.duration_sec}s</strong></span>
+          </div>` +
+          (classRows
+            ? `<table style="border-collapse:collapse;font-size:13px;width:100%;border:1px solid #d9e2ec;border-radius:6px;overflow:hidden;">
+                <thead>
+                  <tr style="background:#f0f4f8;">
+                    <th style="text-align:left;padding:7px 12px;color:#486581;font-size:12px;text-transform:uppercase;letter-spacing:0.6px;">Class</th>
+                    <th style="text-align:left;padding:7px 12px;color:#486581;font-size:12px;text-transform:uppercase;letter-spacing:0.6px;">Detections</th>
+                  </tr>
+                </thead>
+                <tbody>${classRows}</tbody>
+              </table>`
+            : `<p style="color:#9aa5b4;font-size:13px;">No detections found in this video.</p>`
+          );
+      }
+      if (phase4PollTimer) { clearInterval(phase4PollTimer); phase4PollTimer = null; }
+      if (startBtn) startBtn.textContent = "Start Evaluation";
+    }
+
+    if (d.stage === "Error") {
+      if (errEl && d.error) { errEl.textContent = d.error; errEl.style.display = ""; }
+      if (phase4PollTimer) { clearInterval(phase4PollTimer); phase4PollTimer = null; }
+      if (startBtn) { startBtn.disabled = false; startBtn.textContent = "Start Evaluation"; }
+    }
+  }
+
+  async function refreshPhase4Status() {
+    try {
+      const r = await fetch("/phase4/status");
+      if (r.ok) renderPhase4Status(await r.json());
+    } catch (_) {}
+  }
+
+  function activatePhase4Tab() {
+    refreshPhase4Status();
+  }
+
+  document.getElementById("phase4StartBtn").addEventListener("click", async () => {
+    const btn     = document.getElementById("phase4StartBtn");
+    const errEl   = document.getElementById("phase4Error");
+    const videoIn = document.getElementById("phase4VideoFile");
+    const modelIn = document.getElementById("phase4ModelFile");
+    const useP3   = document.getElementById("phase4UsePhase3Model");
+
+    if (errEl) errEl.style.display = "none";
+
+    if (!videoIn.files.length) {
+      if (errEl) { errEl.textContent = "Select a video file first."; errEl.style.display = ""; }
+      return;
+    }
+    if (!useP3.checked && !modelIn.files.length) {
+      if (errEl) { errEl.textContent = "Select a custom model file, or enable 'Use Phase 3 model'."; errEl.style.display = ""; }
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("video", videoIn.files[0], videoIn.files[0].name);
+    if (!useP3.checked && modelIn.files.length) {
+      formData.append("model", modelIn.files[0], modelIn.files[0].name);
+    }
+
+    btn.disabled = true;
+    btn.textContent = "Starting…";
+    const resultsEl = document.getElementById("phase4Results");
+    if (resultsEl) resultsEl.style.display = "none";
+    try {
+      const r = await fetch("/phase4/evaluate", { method: "POST", body: formData });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "Start failed");
+      btn.textContent = "Evaluating…";
+      if (phase4PollTimer) clearInterval(phase4PollTimer);
+      phase4PollTimer = setInterval(refreshPhase4Status, 2000);
+    } catch (err) {
+      if (errEl) { errEl.textContent = err.message; errEl.style.display = ""; }
+      btn.disabled = false;
+      btn.textContent = "Start Evaluation";
+    }
+  });
+
+  document.getElementById("phase4StopBtn").addEventListener("click", async () => {
+    try { await fetch("/phase4/stop", { method: "POST" }); } catch (_) {}
+  });
+
+  document.getElementById("phase4DownloadBtn").addEventListener("click", () => {
+    window.location.href = "/phase4/results";
+  });
+
+  // ── System Health ───────────────────────────────────────────────
+  async function loadHealthStatus() {
+    const el = document.getElementById("healthStatus");
+    el.innerHTML = '<span style="color:#9aa5b4;font-size:13px;">Checking…</span>';
+    try {
+      const data = await fetch("/api/health").then(r => r.json());
+      el.innerHTML = renderHealthRows(data);
+    } catch (e) {
+      el.innerHTML = '<span style="color:#c92a2a;font-size:13px;">Could not reach server.</span>';
+    }
+  }
+
+  function renderHealthRows(data) {
+    const rows = [];
+
+    // Overall status
+    const overallDot = data.ok ? "ok" : (data.errors.length ? "error" : "warn");
+    const overallText = data.ok
+      ? (data.warnings.length ? `OK — ${data.warnings.length} warning(s)` : "All checks passed")
+      : `${data.errors.length} error(s), ${data.warnings.length} warning(s)`;
+    rows.push(row(overallDot, "Overall", overallText));
+
+    // Backgrounds
+    const bg = data.info.backgrounds || {};
+    const bgCats = bg.categories || {};
+    const catNames = Object.keys(bgCats);
+    let bgDetail = `${bg.total || 0} image(s) total`;
+    if (catNames.length) {
+      bgDetail += "; categories: " + catNames.map(c => `${c} (${bgCats[c]})`).join(", ");
+    }
+    const bgDot = (bg.total || 0) === 0 ? "error" : (catNames.some(c => bgCats[c] < 15) ? "warn" : "ok");
+    rows.push(row(bgDot, "Backgrounds", bgDetail));
+
+    // Model
+    const m = data.info.model || {};
+    rows.push(row(m.exists ? "ok" : "error", "Model weights", m.path || "(not set)"));
+
+    // Scripts
+    rows.push(row(data.info.scripts_ok ? "ok" : "error", "Scripts", data.info.scripts_ok ? "frame_stride.py, rembg.py found" : "One or more scripts missing"));
+
+    // Config split
+    const sp = data.info.split_pct || {};
+    const splitOk = sp.total === 100;
+    rows.push(row(splitOk ? "ok" : "error", "Dataset split", `train ${sp.train}% + val ${sp.val}% + test ${sp.test}% = ${sp.total}%`));
+
+    // Phase 1 classes
+    const classes = data.info.classes || {};
+    const classNames = Object.keys(classes);
+    if (classNames.length) {
+      const detail = classNames.map(c => `${c} (${classes[c].cutouts} cutout(s))`).join(", ");
+      const noCutouts = classNames.some(c => classes[c].cutouts === 0);
+      rows.push(row(noCutouts ? "warn" : "ok", "Phase 1 classes", detail));
+    } else {
+      rows.push(row("warn", "Phase 1 classes", "No classes yet — upload and process videos first"));
+    }
+
+    // ffmpeg
+    rows.push(row(data.info.ffmpeg ? "ok" : "warn", "ffmpeg", data.info.ffmpeg ? "Found (CUDA extraction available)" : "Not found (CPU fallback will be used)"));
+
+    // Errors + warnings list
+    if (data.errors.length || data.warnings.length) {
+      const items = [
+        ...data.errors.map(e => `<li style="color:#c92a2a;">✗ ${e}</li>`),
+        ...data.warnings.map(w => `<li style="color:#b45309;">⚠ ${w}</li>`),
+      ].join("");
+      rows.push(`<div class="health-row"><div class="health-detail"><ul style="list-style:none;padding:0;">${items}</ul></div></div>`);
+    }
+
+    return rows.join("");
+  }
+
+  function row(dot, label, detail) {
+    return `<div class="health-row">
+      <div class="health-dot ${dot}"></div>
+      <div class="health-label">${label}</div>
+      <div class="health-detail">${detail}</div>
+    </div>`;
+  }
+
+  document.getElementById("healthRefreshBtn").addEventListener("click", loadHealthStatus);
+
+  // ── Init ───────────────────────────────────────────────────────
+  refreshClasses();
+  refreshProgress();
+  refreshPaths();
+  refreshPhase0Status();
+  loadBgCategories();
+  loadObjectProfiles();
+  loadHealthStatus();
+</script>
+</body>
+</html>
