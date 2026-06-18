@@ -42,7 +42,7 @@ FRAME_STRIDE_SCRIPT = PROJECT_DIR / "scripts" / "frame_stride.py"
 REMBG_SCRIPT = PROJECT_DIR / "tools" / "rembg.py"
 CONFIG_PATH = PROJECT_DIR / "config.yaml"
 
-VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".move", ".avi", ".mkv", ".webm", ".m4v"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
 
 app = Flask(__name__)
@@ -108,7 +108,7 @@ DEFAULT_CONFIG: dict = {
         "min_backgrounds_per_category": 15,
     },
     "phase2": {
-        "blur_max_pct": 15,
+        "blur_max_pct": 0,
         "brightness_variation_pct": 10,
         "contrast_variation_pct": 20,
         "grid_cols": 3,
@@ -231,6 +231,15 @@ def safe_relative_path(raw_name: str) -> Path:
     return Path(*parts)
 
 
+def safe_uploaded_video_path(raw_name: str) -> Path:
+    """Store uploads as <class>/<filename>, where class is the containing folder."""
+    safe_path = safe_relative_path(raw_name)
+    parts = safe_path.parts
+    if len(parts) >= 2:
+        return Path(parts[-2]) / parts[-1]
+    return safe_path
+
+
 def set_job(**updates) -> None:
     with job_lock:
         job.update(updates)
@@ -305,10 +314,30 @@ def _dirs_with_images(base_dir: Path) -> list[str]:
     return list(names)
 
 
+def _dirs_with_files(base_dir: Path, extensions: set[str]) -> list[str]:
+    names: set[str] = set()
+    if not base_dir.exists():
+        return []
+    for path in base_dir.rglob("*"):
+        if path.is_file() and path.suffix.lower() in extensions:
+            try:
+                rel = path.relative_to(base_dir)
+            except ValueError:
+                continue
+            if len(rel.parts) >= 2:
+                names.add(rel.parts[-2])
+    return list(names)
+
+
+def uploaded_class_names() -> list[str]:
+    return sorted(_dirs_with_files(VIDEO_DIR, VIDEO_EXTENSIONS))
+
+
 def all_known_classes() -> list[str]:
     """Return class names found across VIDEO_DIR, IMAGE_DIR, REMBG_DIR, and profiles."""
     classes: set[str] = set()
-    for base in (VIDEO_DIR, IMAGE_DIR, REMBG_DIR):
+    classes.update(uploaded_class_names())
+    for base in (IMAGE_DIR, REMBG_DIR):
         classes.update(_dirs_with_images(base))
     classes.update(load_object_profiles().keys())
     return sorted(classes)
@@ -618,7 +647,7 @@ def image_files(root: Path) -> list[Path]:
 
 
 def class_names() -> list[str]:
-    return _dirs_with_images(IMAGE_DIR)
+    return sorted(set(_dirs_with_images(IMAGE_DIR)) | set(uploaded_class_names()))
 
 
 def source_split_dir(class_name: str, split: str, root: Path) -> Path:
@@ -646,6 +675,8 @@ def brightness_target_range(profile: dict) -> tuple[float, float] | None:
         value = float(profile.get("brightness", profile.get("hsv_v")))
     except (KeyError, TypeError, ValueError):
         return None
+    if value <= 0:
+        return None
     variation = get_cfg("phase2", "brightness_variation_pct", default=10) / 100.0
     return max(0.0, value * (1.0 - variation)), min(1.0, value * (1.0 + variation))
 
@@ -661,7 +692,7 @@ def adjust_object_brightness(
     brightness_range = brightness_target_range(profile)
     if brightness_range is None:
         return image
-    object_pixels = mask < 255
+    object_pixels = mask > 0
     if not np.any(object_pixels):
         return image
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV).astype(np.float32)
@@ -678,7 +709,7 @@ def apply_contrast(image: np.ndarray, mask: np.ndarray, rng: random.Random) -> n
     if variation <= 0:
         return image
     factor = max(0.5, min(2.0, 1.0 + rng.uniform(-variation, variation)))
-    object_pixels = mask < 255
+    object_pixels = mask > 0
     if not np.any(object_pixels):
         return image
     adjusted = np.clip(image.astype(np.float32) * factor, 0, 255).astype(np.uint8)
@@ -686,17 +717,51 @@ def apply_contrast(image: np.ndarray, mask: np.ndarray, rng: random.Random) -> n
 
 
 def apply_blur(image: np.ndarray, mask: np.ndarray, rng: random.Random) -> np.ndarray:
-    blur_max_pct = get_cfg("phase2", "blur_max_pct", default=15) / 100.0
+    blur_max_pct = get_cfg("phase2", "blur_max_pct", default=0) / 100.0
     if blur_max_pct <= 0:
         return image
-    max_k = max(1, int(min(image.shape[:2]) * blur_max_pct))
+    max_k = min(3, max(1, int(min(image.shape[:2]) * blur_max_pct)))
     k = rng.randint(0, max_k)
     if k == 0:
         return image
     ksize = 2 * k + 1
-    object_pixels = mask < 255
+    object_pixels = mask > 0
     blurred = cv2.GaussianBlur(image, (ksize, ksize), 0)
     return np.where(object_pixels[..., None], blurred, image)
+
+
+def normalize_object_mask(
+    mask: np.ndarray,
+    alpha: np.ndarray | None,
+    target_shape: tuple[int, int],
+) -> np.ndarray:
+    """Return a uint8 mask where object pixels are 255 and background is 0."""
+    if alpha is not None:
+        if alpha.shape[:2] != target_shape:
+            alpha = cv2.resize(alpha, (target_shape[1], target_shape[0]), interpolation=cv2.INTER_NEAREST)
+        # Step 4: Filter out the transparent alpha pixels. Only the remaining
+        # visible object pixels are eligible to be pasted onto a background.
+        _, alpha_binary = cv2.threshold(alpha, 0, 255, cv2.THRESH_BINARY)
+        if cv2.findNonZero(alpha_binary) is not None:
+            return alpha_binary
+
+    if mask.shape[:2] != target_shape:
+        mask = cv2.resize(mask, (target_shape[1], target_shape[0]), interpolation=cv2.INTER_NEAREST)
+
+    top = mask[0, :]
+    bottom = mask[-1, :]
+    left = mask[:, 0]
+    right = mask[:, -1]
+    border_mean = float(np.concatenate((top, bottom, left, right)).mean())
+
+    if border_mean >= 127.0:
+        object_pixels = mask < 250
+    else:
+        object_pixels = mask > 5
+
+    binary = np.zeros(mask.shape, dtype=np.uint8)
+    binary[object_pixels] = 255
+    return binary
 
 
 def load_object(
@@ -706,19 +771,29 @@ def load_object(
     rng: random.Random,
     profile: dict | None,
 ):
-    image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    raw_image = cv2.imread(str(image_path), cv2.IMREAD_UNCHANGED)
     mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
-    if image is None or mask is None:
+    if raw_image is None or mask is None:
         return None
+    alpha = None
+    if raw_image.ndim == 2:
+        image = cv2.cvtColor(raw_image, cv2.COLOR_GRAY2BGR)
+    elif raw_image.shape[2] == 4:
+        image = raw_image[:, :, :3]
+        alpha = raw_image[:, :, 3]
+        image[alpha == 0] = 0
+    else:
+        image = raw_image[:, :, :3]
     if mask.shape[:2] != image.shape[:2]:
         mask = cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
+    mask = normalize_object_mask(mask, alpha, image.shape[:2])
     image = adjust_object_brightness(image, mask, rng, profile)
     image = apply_contrast(image, mask, rng)
     image = apply_blur(image, mask, rng)
     if device.type == "cuda":
         image_tensor = torch.from_numpy(image).to(device=device, dtype=torch.float32).permute(2, 0, 1)
         mask_tensor = torch.from_numpy(mask).to(device=device)
-        object_mask = mask_tensor < 255
+        object_mask = mask_tensor > 0
         points = torch.nonzero(object_mask, as_tuple=False)
         if points.numel() == 0:
             return None
@@ -731,7 +806,7 @@ def load_object(
         if cropped_image.numel() == 0 or cropped_mask.numel() == 0:
             return None
         return cropped_image, cropped_mask
-    _, binary = cv2.threshold(mask, 254, 255, cv2.THRESH_BINARY_INV)
+    binary = mask
     points = cv2.findNonZero(binary)
     if points is None:
         return None
@@ -761,6 +836,68 @@ def object_shape(object_image) -> tuple[int, int]:
     return object_image.shape[:2]
 
 
+def distance_scaled_object_size(
+    obj_w: int,
+    obj_h: int,
+    video_width: int,
+    video_height: int,
+    size_profile: dict | None,
+    rng: random.Random,
+) -> tuple[int, int] | None:
+    if not size_profile:
+        return None
+
+    # Step 1: Calculate the minimum pixel boundaries from the current
+    # video/background resolution and the original object dimensions.
+    if video_width <= 0 or video_height <= 0 or obj_w <= 0 or obj_h <= 0:
+        return None
+    smallest_w = (1280 / video_width) * obj_w
+    smallest_h = (720 / video_height) * obj_h
+
+    # Step 2: Calculate maximum boundaries using the requested distance scale.
+    try:
+        distance_from_camera_to_object_cm = float(size_profile.get("camera_object_distance_cm", 0) or 0)
+        wanted_distance_cm = float(size_profile.get("wanted_distance_cm", 0) or 0)
+        distance_scale = distance_from_camera_to_object_cm / wanted_distance_cm
+    except (TypeError, ValueError, ZeroDivisionError):
+        distance_scale = 0.0
+    if distance_scale > 0:
+        # Step 3: Sample one scale factor so width and height move together
+        # from the smallest object size to the largest object size.
+        min_scale, max_scale = sorted((1.0, distance_scale))
+        sampled_scale = rng.uniform(min_scale, max_scale)
+        new_w = int(round(smallest_w * sampled_scale))
+        new_h = int(round(smallest_h * sampled_scale))
+        fit_scale = min(1.0, video_width / max(1, new_w), video_height / max(1, new_h))
+        if fit_scale < 1.0:
+            new_w = int(round(new_w * fit_scale))
+            new_h = int(round(new_h * fit_scale))
+        return max(2, new_w), max(2, new_h)
+
+    try:
+        max_range_cm = float(size_profile.get("object_max_range_cm", 0) or 0)
+    except (TypeError, ValueError):
+        return None
+    if max_range_cm <= 0:
+        return None
+
+    try:
+        min_distance_cm = float(size_profile.get("min_distance_cm", 0) or 0)
+    except (TypeError, ValueError):
+        min_distance_cm = 0.0
+    if min_distance_cm <= 0:
+        close_sample = size_profile.get("close_sample") or {}
+        try:
+            min_distance_cm = float(close_sample.get("distance_cm", max_range_cm))
+        except (TypeError, ValueError):
+            min_distance_cm = max_range_cm
+
+    min_distance_cm = max(1.0, min(min_distance_cm, max_range_cm))
+    sampled_distance_cm = rng.uniform(min_distance_cm, max_range_cm)
+    scale = max_range_cm / sampled_distance_cm
+    return max(2, round(obj_w * scale)), max(2, round(obj_h * scale))
+
+
 def canvas_to_image(canvas) -> np.ndarray:
     if isinstance(canvas, torch.Tensor):
         return canvas.permute(1, 2, 0).clamp(0, 255).to(torch.uint8).cpu().numpy()
@@ -787,7 +924,14 @@ def paste_object(
 
     placed = None
     for _ in range(max_attempts):
-        if size_profile:
+        distance_scaled_size = distance_scaled_object_size(
+            obj_w, obj_h, canvas_w, canvas_h, size_profile, rng,
+        )
+        if distance_scaled_size is not None:
+            new_w, new_h = distance_scaled_size
+            new_w = min(canvas_w, new_w)
+            new_h = min(canvas_h, new_h)
+        elif size_profile:
             min_w = max(2, int(size_profile.get("min_width", size_profile.get("width", obj_w))))
             max_w = max(min_w, int(size_profile.get("max_width", size_profile.get("width", obj_w))))
             min_h = max(2, int(size_profile.get("min_height", size_profile.get("height", obj_h))))
@@ -833,17 +977,23 @@ def paste_object(
     vis_box = (vis_x1, vis_y1, vis_x2 - vis_x1, vis_y2 - vis_y1)
 
     if device.type == "cuda":
-        paste_object_cuda(canvas, object_image, object_mask, x, y, new_w, new_h, device)
+        paste_object_cuda(
+            canvas, object_image, object_mask, x, y, new_w, new_h, device,
+            copy_pixels=distance_scaled_size is not None,
+        )
     else:
         src_x, src_y = max(0, -x), max(0, -y)
         paste_w, paste_h = vis_x2 - vis_x1, vis_y2 - vis_y1
-        obj_r = cv2.resize(object_image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        interpolation = cv2.INTER_NEAREST if distance_scaled_size is not None else cv2.INTER_AREA
+        obj_r = cv2.resize(object_image, (new_w, new_h), interpolation=interpolation)
         msk_r = cv2.resize(object_mask,  (new_w, new_h), interpolation=cv2.INTER_NEAREST)
         obj_crop = obj_r[src_y:src_y + paste_h, src_x:src_x + paste_w]
         msk_crop = msk_r[src_y:src_y + paste_h, src_x:src_x + paste_w]
-        alpha = (msk_crop.astype(np.float32) / 255.0)[..., None]
-        roi = canvas[vis_y1:vis_y2, vis_x1:vis_x2].astype(np.float32)
-        canvas[vis_y1:vis_y2, vis_x1:vis_x2] = (obj_crop.astype(np.float32) * alpha + roi * (1.0 - alpha)).astype(np.uint8)
+        # Step 4: Paste only alpha-surviving object pixels. Transparent
+        # pixels from the cutout never overwrite the random background.
+        object_pixels = msk_crop > 0
+        roi = canvas[vis_y1:vis_y2, vis_x1:vis_x2]
+        roi[object_pixels] = obj_crop[object_pixels]
     return canvas, vis_box
 
 
@@ -856,6 +1006,7 @@ def paste_object_cuda(
     width: int,
     height: int,
     device: torch.device,
+    copy_pixels: bool = False,
 ) -> None:
     ch_t = int(canvas.shape[1])
     cw_t = int(canvas.shape[2])
@@ -867,16 +1018,22 @@ def paste_object_cuda(
         return
     object_image = object_image.to(device=device, dtype=torch.float32)
     object_mask  = object_mask.to(device=device, dtype=torch.float32)
-    resized_image = torch_functional.interpolate(
-        object_image.unsqueeze(0), size=(height, width), mode="bilinear", align_corners=False,
-    ).squeeze(0)
+    if copy_pixels:
+        resized_image = torch_functional.interpolate(
+            object_image.unsqueeze(0), size=(height, width), mode="nearest",
+        ).squeeze(0)
+    else:
+        resized_image = torch_functional.interpolate(
+            object_image.unsqueeze(0), size=(height, width), mode="bilinear", align_corners=False,
+        ).squeeze(0)
     resized_mask = torch_functional.interpolate(
         object_mask.unsqueeze(0), size=(height, width), mode="nearest",
     ).squeeze(0)
     img_crop  = resized_image[:, src_y:src_y + paste_h, src_x:src_x + paste_w]
     mask_crop = resized_mask[:, src_y:src_y + paste_h, src_x:src_x + paste_w]
     roi = canvas[:, dst_y:dst_y + paste_h, dst_x:dst_x + paste_w]
-    canvas[:, dst_y:dst_y + paste_h, dst_x:dst_x + paste_w] = img_crop * mask_crop + roi * (1.0 - mask_crop)
+    # Step 4: Paste only alpha-surviving object pixels on the CUDA path too.
+    canvas[:, dst_y:dst_y + paste_h, dst_x:dst_x + paste_w] = torch.where(mask_crop > 0, img_crop, roi)
 
 
 def boxes_overlap(
@@ -1008,9 +1165,7 @@ def synthesize_split(
     if not bg_shared_pool:
         raise RuntimeError("No background images available. Check the bg/ folder.")
 
-    max_objects       = max(1, get_cfg("phase2", "max_objects_per_image", default=15))
     placement_mode    = get_cfg("phase2", "placement_mode", default="random")
-    overlap_thr       = float(get_cfg("phase2", "overlap_threshold_pct", default=20))
     out_of_frame      = float(get_cfg("phase2", "out_of_frame_pct", default=10)) / 100.0
     grid_rows         = max(1, get_cfg("phase2", "grid_rows", default=3))
     grid_cols         = max(1, get_cfg("phase2", "grid_cols", default=3))
@@ -1053,12 +1208,10 @@ def synthesize_split(
             rng.shuffle(cells)
             grid_cells = cells
 
-        num_objects = rng.randint(1, max_objects)
         labels: list[str] = []
         occupied_boxes: list[tuple[int, int, int, int]] = []
 
-        for obj_idx in range(num_objects):
-            class_name   = rng.choice(names)
+        for obj_idx, class_name in enumerate(names):
             class_id     = names.index(class_name)
             object_pair  = rng.choice(sources[class_name])
             object_profile = object_profiles.get(class_name)
@@ -1068,7 +1221,7 @@ def synthesize_split(
             grid_cell = grid_cells[obj_idx % len(grid_cells)] if grid_cells else None
             pasted = paste_object(
                 canvas, loaded[0], loaded[1], rng, occupied_boxes, device,
-                object_profile, grid_cell, out_of_frame, overlap_thr,
+                object_profile, grid_cell, out_of_frame, 0,
             )
             if pasted is None:
                 continue
@@ -1077,7 +1230,7 @@ def synthesize_split(
             ch, cw = canvas_shape(canvas)
             labels.append(f"{class_id} {(vx + vw/2)/cw:.6f} {(vy + vh/2)/ch:.6f} {vw/cw:.6f} {vh/ch:.6f}")
 
-        if not labels:
+        if len(labels) != len(names):
             continue
 
         cv2.imwrite(str(image_output / f"{stem}.jpg"), canvas_to_image(canvas))
@@ -1093,11 +1246,11 @@ def synthesize_split(
 
     new_saved = saved - start_idx
     if new_saved < new_count:
-        raise RuntimeError(f"Only generated {new_saved}/{new_count} new {split} image(s). Try reducing max_objects_per_image or overlap_threshold_pct.")
+        raise RuntimeError(f"Only generated {new_saved}/{new_count} new {split} image(s). Try smaller object sizes or less restrictive placement settings.")
     return saved
 
 
-def synthesize_dataset(total_images: int) -> None:
+def synthesize_dataset(images_per_class: int) -> None:
     total_started_at = time.perf_counter()
     try:
         set_job(running=True, stage="Synthesizing", percent=5,
@@ -1122,9 +1275,13 @@ def synthesize_dataset(total_images: int) -> None:
         val_pct      = get_cfg("phase2", "val_pct",    default=15)
         test_pct     = get_cfg("phase2", "test_pct",   default=5)
         total_pct    = max(1, train_pct + val_pct + test_pct)
+        images_per_class = max(1, images_per_class)
+        total_images = images_per_class
         train_count  = max(1, round(total_images * train_pct  / total_pct))
         val_count    = max(1, round(total_images * val_pct    / total_pct))
         test_count   = max(0, total_images - train_count - val_count)
+
+        rng = random.Random()
 
         if start_idx == 0:
             shutil.rmtree(SYNTH_IMAGE_DIR, ignore_errors=True)
@@ -1132,17 +1289,16 @@ def synthesize_dataset(total_images: int) -> None:
             SYNTH_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
             SYNTH_LABEL_DIR.mkdir(parents=True, exist_ok=True)
 
-        rng = random.Random()
         device = datagen_device()
         object_profiles = load_object_profiles()
         sources = _build_sources(names)
         bg_pool_per_class = _build_bg_pool_per_class(names, backgrounds, object_profiles)
         placement_mode = get_cfg("phase2", "placement_mode", default="random")
-        max_objects = get_cfg("phase2", "max_objects_per_image", default=15)
 
         append_log(f"Classes: {', '.join(names)}")
+        append_log(f"Images to synthesize: {total_images} | objects per image: {len(names)}")
         append_log(f"Device: {device}" + (f" ({torch.cuda.get_device_name(device)})" if device.type == "cuda" else ""))
-        append_log(f"Placement: {placement_mode} | max objects/image: {max_objects}")
+        append_log(f"Placement: {placement_mode} | one object per class per image")
         append_log(f"Split: {train_count} train / {val_count} val / {test_count} test" +
                    (f" (resuming from idx {start_idx})" if start_idx > 0 else ""))
         for n in names:
@@ -1174,12 +1330,13 @@ def synthesize_dataset(total_images: int) -> None:
         report = {
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "classes": names,
+            "images_per_class": images_per_class,
             "total_images": total_images,
             "train_count": train_saved,
             "validate_count": val_saved,
             "test_count": test_saved,
             "placement_mode": placement_mode,
-            "max_objects_per_image": max_objects,
+            "objects_per_image": len(names),
             "elapsed": total_elapsed,
         }
         (DATA_DIR / "generation_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -1231,7 +1388,7 @@ def upload():
         if Path(raw_name).suffix.lower() not in VIDEO_EXTENSIONS:
             skipped += 1
             continue
-        out = VIDEO_DIR / safe_relative_path(raw_name)
+        out = VIDEO_DIR / safe_uploaded_video_path(raw_name)
         out.parent.mkdir(parents=True, exist_ok=True)
         fs.save(out)
         saved += 1
@@ -1272,16 +1429,13 @@ def synthesize():
     if snapshot_job()["running"]:
         return jsonify({"error": "A job is already running."}), 409
     try:
-        total_images = int(
-            request.form.get("total_images",
-                request.json.get("total_images") if request.is_json else 100)
-        )
+        images_per_class = int(get_cfg("phase2", "expected_images_per_class", default=108))
     except Exception:
-        total_images = 100
-    total_images = max(1, total_images)
+        images_per_class = 108
+    images_per_class = max(1, images_per_class)
     job_id = uuid.uuid4().hex
     set_job(id=job_id, running=True, stage="Queued", percent=1, message="Synthesis queued", error=None, log=[])
-    threading.Thread(target=synthesize_dataset, args=(total_images,), daemon=True).start()
+    threading.Thread(target=synthesize_dataset, args=(images_per_class,), daemon=True).start()
     return jsonify({"job_id": job_id})
 
 
@@ -1306,9 +1460,7 @@ def phase2_preview():
         sources = _build_sources(names)
         bg_pool_per_class = _build_bg_pool_per_class(names, backgrounds, object_profiles)
 
-        max_objects    = max(1, get_cfg("phase2", "max_objects_per_image", default=15))
         placement_mode = get_cfg("phase2", "placement_mode", default="random")
-        overlap_thr    = float(get_cfg("phase2", "overlap_threshold_pct", default=20))
         out_of_frame   = float(get_cfg("phase2", "out_of_frame_pct", default=10)) / 100.0
         grid_rows      = max(1, get_cfg("phase2", "grid_rows", default=3))
         grid_cols      = max(1, get_cfg("phase2", "grid_cols", default=3))
@@ -1335,10 +1487,8 @@ def phase2_preview():
             rng.shuffle(cells)
             grid_cells = cells
 
-        num_objects = rng.randint(1, max_objects)
         occupied_boxes: list[tuple[int, int, int, int]] = []
-        for obj_idx in range(num_objects):
-            class_name = rng.choice(names)
+        for obj_idx, class_name in enumerate(names):
             object_pair = rng.choice(sources[class_name])
             loaded = load_object(*object_pair, device, rng, object_profiles.get(class_name))
             if loaded is None:
@@ -1346,13 +1496,15 @@ def phase2_preview():
             grid_cell = grid_cells[obj_idx % len(grid_cells)] if grid_cells else None
             pasted = paste_object(
                 canvas, loaded[0], loaded[1], rng, occupied_boxes, device,
-                object_profiles.get(class_name), grid_cell, out_of_frame, overlap_thr,
+                object_profiles.get(class_name), grid_cell, out_of_frame, 0,
             )
             if pasted is None:
                 continue
             canvas, vis_box = pasted
             occupied_boxes.append(vis_box)
 
+        if len(occupied_boxes) != len(names):
+            return jsonify({"error": "Could not place one object for every class without overlap. Try smaller object sizes or grid placement."}), 500
         ok, buf = cv2.imencode(".jpg", canvas_to_image(canvas), [cv2.IMWRITE_JPEG_QUALITY, 85])
         if not ok:
             return jsonify({"error": "Failed to encode preview image."}), 500
@@ -1403,6 +1555,61 @@ def object_profile_bg_categories():
     return jsonify({"ok": True, "class_name": class_name, "background_categories": background_categories})
 
 
+@app.post("/object-profiles/distance")
+def object_profiles_distance():
+    data = request.get_json(silent=True) or {}
+    names = uploaded_class_names() or class_names()
+    if not names:
+        return jsonify({"error": "Upload a class folder before saving the distance profile."}), 400
+    try:
+        camera_object_distance_cm = float(data.get("camera_object_distance_cm", 0))
+        wanted_distance_cm = float(data.get("wanted_distance_cm", 0))
+    except (TypeError, ValueError):
+        camera_object_distance_cm = wanted_distance_cm = 0.0
+    if camera_object_distance_cm <= 0 or wanted_distance_cm <= 0:
+        return jsonify({"error": "Enter distance from camera to object and wanted distance in cm."}), 400
+    distance_scale = camera_object_distance_cm / wanted_distance_cm
+    try:
+        width = int(round(float(data.get("width", 640))))
+        height = int(round(float(data.get("height", 640))))
+    except (TypeError, ValueError):
+        width = height = 640
+    width = max(2, width)
+    height = max(2, height)
+
+    profiles = load_object_profiles()
+    saved: list[str] = []
+    for class_name in names:
+        existing = profiles.get(class_name, {})
+        profile = {
+            "width": width, "height": height,
+            "min_width": width, "max_width": width,
+            "min_height": height, "max_height": height,
+            "bbox_x": int(existing.get("bbox_x", 0) or 0),
+            "bbox_y": int(existing.get("bbox_y", 0) or 0),
+            "source_width": int(existing.get("source_width", 0) or 0),
+            "source_height": int(existing.get("source_height", 0) or 0),
+            "target_width": int(existing.get("target_width", width) or width),
+            "target_height": int(existing.get("target_height", height) or height),
+            "close_sample": existing.get("close_sample"),
+            "far_sample": existing.get("far_sample"),
+            "camera_object_distance_cm": round(camera_object_distance_cm, 3),
+            "wanted_distance_cm": round(wanted_distance_cm, 3),
+            "distance_scale": round(distance_scale, 6),
+            "scaled_wanted_distance_cm": round(camera_object_distance_cm / distance_scale, 3),
+            "min_distance_cm": existing.get("min_distance_cm"),
+            "max_distance_cm": existing.get("max_distance_cm"),
+            "object_max_range_cm": existing.get("object_max_range_cm"),
+            "brightness": existing.get("brightness", 0.0),
+            "background_categories": existing.get("background_categories", []),
+            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        profiles[class_name] = profile
+        saved.append(class_name)
+    save_object_profiles(profiles)
+    return jsonify({"classes": saved, "distance_scale": round(distance_scale, 6), "profiles": profiles})
+
+
 @app.post("/object-profile")
 def object_profile():
     data = request.get_json(silent=True) or {}
@@ -1426,7 +1633,7 @@ def object_profile():
     if not class_name:
         return jsonify({"error": "Select a class before saving the object profile."}), 400
     if width <= 1 or height <= 1:
-        return jsonify({"error": "Draw a valid bounding box before saving."}), 400
+        return jsonify({"error": "Enter a valid object profile size before saving."}), 400
     try:
         brightness = float(data.get("brightness", 0))
     except (TypeError, ValueError):
@@ -1440,17 +1647,22 @@ def object_profile():
     close_sample = distance_sample(data, "close_sample")
     far_sample   = distance_sample(data, "far_sample")
     try:
+        camera_object_distance_cm = float(data.get("camera_object_distance_cm", 0))
         wanted_distance_cm = float(data.get("wanted_distance_cm", 0))
         min_distance_cm    = float(data.get("min_distance_cm", 0))
         max_distance_cm    = float(data.get("max_distance_cm", 0))
+        object_max_range_cm = float(data.get("object_max_range_cm", max_distance_cm))
         min_width  = int(round(float(data.get("min_width",  width))))
         max_width  = int(round(float(data.get("max_width",  width))))
         min_height = int(round(float(data.get("min_height", height))))
         max_height = int(round(float(data.get("max_height", height))))
     except (TypeError, ValueError):
-        wanted_distance_cm = min_distance_cm = max_distance_cm = 0.0
+        camera_object_distance_cm = wanted_distance_cm = min_distance_cm = max_distance_cm = object_max_range_cm = 0.0
         min_width = max_width = width
         min_height = max_height = height
+    if camera_object_distance_cm <= 0 or wanted_distance_cm <= 0:
+        return jsonify({"error": "Enter distance from camera to object and wanted distance in cm."}), 400
+    distance_scale = camera_object_distance_cm / wanted_distance_cm
     profile = {
         "width": width, "height": height,
         "min_width": max(2, min_width), "max_width": max(2, max_width),
@@ -1459,9 +1671,12 @@ def object_profile():
         "source_width": source_width, "source_height": source_height,
         "target_width": target_width, "target_height": target_height,
         "close_sample": close_sample, "far_sample": far_sample,
-        "wanted_distance_cm": round(wanted_distance_cm, 3) if wanted_distance_cm > 0 else None,
+        "camera_object_distance_cm": round(camera_object_distance_cm, 3),
+        "wanted_distance_cm": round(wanted_distance_cm, 3),
+        "distance_scale": round(distance_scale, 6),
         "min_distance_cm": round(min_distance_cm, 3) if min_distance_cm > 0 else None,
         "max_distance_cm": round(max_distance_cm, 3) if max_distance_cm > 0 else None,
+        "object_max_range_cm": round(object_max_range_cm, 3) if object_max_range_cm > 0 else None,
         "brightness": round(max(0.0, min(1.0, brightness)), 6),
         "background_categories": background_categories,
         "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),

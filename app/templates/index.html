@@ -298,38 +298,6 @@
       padding-top: 18px;
     }
 
-    .bbox-wrap {
-      position: relative;
-      margin-top: 10px;
-      width: 100%;
-      max-height: 480px;
-      overflow: auto;
-      border: 1px solid #bcccdc;
-      border-radius: 6px;
-      background: #111827;
-    }
-
-    .bbox-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0,1fr));
-      gap: 12px;
-      margin-top: 12px;
-    }
-
-    .calibration-card {
-      border: 1px solid #d9e2ec;
-      border-radius: 8px;
-      padding: 12px;
-      background: #ffffff;
-    }
-
-    .bbox-title {
-      margin: 0 0 8px;
-      font-weight: 700;
-      color: #323f4b;
-      font-size: 14px;
-    }
-
     canvas {
       display: block;
       max-width: 100%;
@@ -683,7 +651,7 @@
     /* ── Responsive ──────────────────────────── */
     @media (max-width: 780px) {
       .sidebar { width: 150px; }
-      .grid, .bbox-grid, .calibration-grid, .paths, .stats {
+      .grid, .calibration-grid, .paths, .stats {
         grid-template-columns: 1fr;
       }
       .grid-2 { grid-template-columns: 1fr; }
@@ -756,7 +724,7 @@
             <div class="grid">
               <div>
                 <label for="videos">Video folder</label>
-                <input id="videos" name="videos" type="file" accept="video/*,.mov,.MOV"
+                <input id="videos" name="videos" type="file" accept="video/*,video/quicktime,.mov,.MOV,.move,.MOVE"
                        webkitdirectory directory multiple>
               </div>
               <div>
@@ -779,57 +747,21 @@
         <div class="panel">
           <p class="panel-title">Distance Calibration &amp; Object Profile</p>
           <div class="tool-panel" style="margin-top:0;border-top:none;padding-top:0;">
-            <div class="grid">
-              <div></div>
+            <div class="calibration-grid">
               <div>
-                <label for="classSelect">Class</label>
-                <select id="classSelect"></select>
+                <label for="cameraObjectDistance">Distance from camera to object (cm)</label>
+                <input id="cameraObjectDistance" type="number" min="1" step="0.1" placeholder="e.g. 40">
+              </div>
+              <div>
+                <label for="wantedDistance">Wanted distance (cm)</label>
+                <input id="wantedDistance" type="number" min="1" step="0.1" placeholder="e.g. 60">
               </div>
             </div>
             <div class="actions">
-              <button id="saveProfileButton" type="button" class="secondary">Save Box Profile</button>
-              <button id="setCloseButton" type="button" class="secondary">Set Close</button>
-              <button id="setFarButton" type="button" class="secondary">Set Far</button>
-              <button id="clearBoxButton" type="button" class="secondary">Clear Box</button>
-            </div>
-            <div class="bbox-grid">
-              <div class="calibration-card">
-                <p class="bbox-title">Close image bbox</p>
-                <label for="closeImage">Close distance image</label>
-                <input id="closeImage" type="file" accept="image/*">
-                <label for="closeDistance">Close distance (cm)</label>
-                <input id="closeDistance" type="number" min="1" step="0.1" placeholder="e.g. 20">
-                <div class="bbox-wrap">
-                  <canvas id="closeCanvas" width="480" height="270"></canvas>
-                </div>
-              </div>
-              <div class="calibration-card">
-                <p class="bbox-title">Far image bbox</p>
-                <label for="farImage">Far distance image</label>
-                <input id="farImage" type="file" accept="image/*">
-                <label for="farDistance">Far distance (cm)</label>
-                <input id="farDistance" type="number" min="1" step="0.1" placeholder="e.g. 80">
-                <div class="bbox-wrap">
-                  <canvas id="farCanvas" width="480" height="270"></canvas>
-                </div>
-              </div>
-            </div>
-            <div class="calibration-grid">
-              <div>
-                <label for="wantedDistanceMin">Wanted distance min (cm)</label>
-                <input id="wantedDistanceMin" type="number" min="1" step="0.1" placeholder="e.g. 40">
-              </div>
-              <div>
-                <label for="wantedDistanceMax">Wanted distance max (cm)</label>
-                <input id="wantedDistanceMax" type="number" min="1" step="0.1" placeholder="e.g. 60">
-              </div>
+              <button id="saveProfileButton" type="button" class="secondary">Save Distance Profile</button>
             </div>
             <div class="stats">
-              <div class="stat">Box: <span id="boxStats">none</span></div>
-              <div class="stat">Brightness: <span id="brightnessValue">0</span></div>
-              <div class="stat">Close: <span id="closeStats">none</span></div>
-              <div class="stat">Far: <span id="farStats">none</span></div>
-              <div class="stat">Wanted size: <span id="wantedStats">none</span></div>
+              <div class="stat">Scale: <span id="distanceScaleStats">none</span></div>
             </div>
           </div>
         </div>
@@ -955,10 +887,6 @@
         <div class="panel">
           <p class="panel-title">Generate Dataset</p>
           <div class="grid">
-            <div>
-              <label for="totalImages">Total images (train + val + test)</label>
-              <input id="totalImages" name="total_images" type="number" min="1" step="1" value="100">
-            </div>
             <div style="display:flex;align-items:flex-end;">
               <div id="splitPreview" style="font-size:12px;color:#6b7a8f;padding-bottom:8px;"></div>
             </div>
@@ -1050,7 +978,7 @@
           </div>
           <div style="margin-bottom:4px;">
             <label for="phase4VideoFile">Evaluation video</label>
-            <input id="phase4VideoFile" type="file" accept="video/*,.mov,.MOV">
+            <input id="phase4VideoFile" type="file" accept="video/*,video/quicktime,.mov,.MOV,.move,.MOVE">
           </div>
 
           <div class="actions">
@@ -1130,25 +1058,10 @@
   const clearButton           = document.getElementById("clearButton");
   const videosInput           = document.getElementById("videos");
   const imagesPerVideoInput   = document.getElementById("imagesPerVideo");
-  const totalImagesInput      = document.getElementById("totalImages");
-  const closeImageInput       = document.getElementById("closeImage");
-  const farImageInput         = document.getElementById("farImage");
-  const classSelect           = document.getElementById("classSelect");
   const saveProfileButton     = document.getElementById("saveProfileButton");
-  const setCloseButton        = document.getElementById("setCloseButton");
-  const setFarButton          = document.getElementById("setFarButton");
-  const clearBoxButton        = document.getElementById("clearBoxButton");
-  const closeDistanceInput    = document.getElementById("closeDistance");
-  const farDistanceInput      = document.getElementById("farDistance");
-  const wantedDistanceMinInput = document.getElementById("wantedDistanceMin");
-  const wantedDistanceMaxInput = document.getElementById("wantedDistanceMax");
-  const closeCanvas           = document.getElementById("closeCanvas");
-  const farCanvas             = document.getElementById("farCanvas");
-  const boxStatsEl            = document.getElementById("boxStats");
-  const brightnessValueEl     = document.getElementById("brightnessValue");
-  const closeStatsEl          = document.getElementById("closeStats");
-  const farStatsEl            = document.getElementById("farStats");
-  const wantedStatsEl         = document.getElementById("wantedStats");
+  const cameraObjectDistanceInput = document.getElementById("cameraObjectDistance");
+  const wantedDistanceInput   = document.getElementById("wantedDistance");
+  const distanceScaleStatsEl  = document.getElementById("distanceScaleStats");
   const stageEl               = document.getElementById("stage");
   const percentEl             = document.getElementById("percent");
   const fillEl                = document.getElementById("fill");
@@ -1156,27 +1069,7 @@
   const logEl                 = document.getElementById("log");
   const frameCountWarning     = document.getElementById("frameCountWarning");
 
-  let brightnessValue = 0;
-  let closeSample = null;
-  let farSample = null;
   const profileTargetSize = 640;
-  const statsCanvas = document.createElement("canvas");
-  const statsCtx = statsCanvas.getContext("2d", { willReadFrequently: true });
-
-  const calibrationViews = {
-    close: {
-      canvas: closeCanvas,
-      ctx: closeCanvas.getContext("2d", { willReadFrequently: true }),
-      image: null, displayScale: 1, activeBox: null, draftBox: null,
-      isDrawing: false, brightness: 0,
-    },
-    far: {
-      canvas: farCanvas,
-      ctx: farCanvas.getContext("2d", { willReadFrequently: true }),
-      image: null, displayScale: 1, activeBox: null, draftBox: null,
-      isDrawing: false, brightness: 0,
-    },
-  };
 
   // ── Tab switching ──────────────────────────────────────────────
   const tabBtns   = document.querySelectorAll(".tab-btn");
@@ -1213,11 +1106,9 @@
   function setBusy(isBusy) {
     [
       uploadButton, startButton, synthesizeButton, clearButton,
-      videosInput, imagesPerVideoInput, totalImagesInput,
-      closeImageInput, farImageInput, classSelect,
-      saveProfileButton, setCloseButton, setFarButton, clearBoxButton,
-      closeDistanceInput, farDistanceInput,
-      wantedDistanceMinInput, wantedDistanceMaxInput,
+      videosInput, imagesPerVideoInput,
+      saveProfileButton,
+      cameraObjectDistanceInput, wantedDistanceInput,
     ].forEach(el => { if (el) el.disabled = isBusy; });
   }
 
@@ -1261,20 +1152,6 @@
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Request failed");
     return data;
-  }
-
-  // ── Class list ─────────────────────────────────────────────────
-  async function refreshClasses() {
-    const response = await fetch("/classes");
-    const data = await response.json();
-    const classes = data.classes || [];
-    classSelect.innerHTML = "";
-    for (const name of classes) {
-      const option = document.createElement("option");
-      option.value = name;
-      option.textContent = name;
-      classSelect.appendChild(option);
-    }
   }
 
   // ── Background categories ──────────────────────────────────────
@@ -1396,86 +1273,7 @@
     setTimeout(() => { msgEl.style.display = "none"; }, 4000);
   });
 
-  // ── Calibration canvas helpers ─────────────────────────────────
-  function canvasPoint(event, view) {
-    const rect = view.canvas.getBoundingClientRect();
-    return {
-      x: Math.round((event.clientX - rect.left) * (view.canvas.width / rect.width)),
-      y: Math.round((event.clientY - rect.top) * (view.canvas.height / rect.height)),
-    };
-  }
-
-  function normalizedBox(start, end, view) {
-    const x = Math.max(0, Math.min(start.x, end.x));
-    const y = Math.max(0, Math.min(start.y, end.y));
-    const right  = Math.min(view.canvas.width,  Math.max(start.x, end.x));
-    const bottom = Math.min(view.canvas.height, Math.max(start.y, end.y));
-    return { x, y, width: Math.max(0, right - x), height: Math.max(0, bottom - y) };
-  }
-
-  function drawCanvas(view) {
-    view.ctx.clearRect(0, 0, view.canvas.width, view.canvas.height);
-    if (view.image) {
-      view.ctx.drawImage(view.image, 0, 0, view.canvas.width, view.canvas.height);
-    } else {
-      view.ctx.fillStyle = "#111827";
-      view.ctx.fillRect(0, 0, view.canvas.width, view.canvas.height);
-    }
-    const box = view.draftBox || view.activeBox;
-    if (box && box.width > 0 && box.height > 0) {
-      view.ctx.lineWidth = Math.max(2, Math.round(2 * view.displayScale));
-      view.ctx.strokeStyle = "#22c55e";
-      view.ctx.strokeRect(box.x, box.y, box.width, box.height);
-    }
-  }
-
-  function updateViewStats(view) {
-    const box = view.activeBox;
-    if (!box || box.width < 2 || box.height < 2 || !view.image) {
-      view.brightness = 0;
-      return null;
-    }
-    statsCanvas.width  = view.canvas.width;
-    statsCanvas.height = view.canvas.height;
-    statsCtx.drawImage(view.image, 0, 0, statsCanvas.width, statsCanvas.height);
-    const imageData = statsCtx.getImageData(box.x, box.y, box.width, box.height).data;
-    let vTotal = 0;
-    const count = Math.max(1, imageData.length / 4);
-    for (let index = 0; index < imageData.length; index += 4) {
-      vTotal += Math.max(imageData[index], imageData[index + 1], imageData[index + 2]) / 255;
-    }
-    view.brightness = vTotal / count;
-    return boxToTargetSize(box, view);
-  }
-
-  function updateStats() {
-    const closeBox = updateViewStats(calibrationViews.close);
-    const farBox   = updateViewStats(calibrationViews.far);
-    const activeBoxText = [
-      closeBox ? `close ${closeBox.width} x ${closeBox.height}px` : null,
-      farBox   ? `far ${farBox.width} x ${farBox.height}px`       : null,
-    ].filter(Boolean).join(", ");
-    boxStatsEl.textContent = activeBoxText || "none";
-    const brightnessParts = [
-      closeBox ? `close ${calibrationViews.close.brightness.toFixed(4)}` : null,
-      farBox   ? `far ${calibrationViews.far.brightness.toFixed(4)}`     : null,
-    ].filter(Boolean).join(", ");
-    brightnessValue = [calibrationViews.close.brightness, calibrationViews.far.brightness]
-      .filter(v => v > 0)
-      .reduce((total, value, _i, values) => total + value / values.length, 0);
-    brightnessValueEl.textContent = brightnessParts || "0";
-    updateCalibrationStats();
-  }
-
-  function boxToTargetSize(box, view) {
-    return {
-      x:      Math.round((box.x      / view.canvas.width)  * profileTargetSize),
-      y:      Math.round((box.y      / view.canvas.height) * profileTargetSize),
-      width:  Math.round((box.width  / view.canvas.width)  * profileTargetSize),
-      height: Math.round((box.height / view.canvas.height) * profileTargetSize),
-    };
-  }
-
+  // ── Distance profile helpers ──────────────────────────────────
   function readDistance(input, label) {
     const value = Number(input.value);
     if (!Number.isFinite(value) || value <= 0)
@@ -1483,78 +1281,24 @@
     return value;
   }
 
-  function captureDistanceSample(input, label) {
-    const view = calibrationViews[label];
-    if (!view.image) throw new Error(`Load the ${label} distance image first.`);
-    if (!view.activeBox || view.activeBox.width < 2 || view.activeBox.height < 2)
-      throw new Error(`Draw the ${label} bounding box first.`);
-    const box = boxToTargetSize(view.activeBox, view);
+  function readDistanceProfile() {
+    const cameraObjectDistance = readDistance(cameraObjectDistanceInput, "camera-to-object");
+    const wantedDistance = readDistance(wantedDistanceInput, "wanted");
+    const scale = cameraObjectDistance / wantedDistance;
     return {
-      distance_cm:   readDistance(input, label),
-      width:         box.width,
-      height:        box.height,
-      brightness:    view.brightness,
-      source_width:  view.image.naturalWidth,
-      source_height: view.image.naturalHeight,
-      bbox_x:        box.x,
-      bbox_y:        box.y,
+      camera_object_distance_cm: cameraObjectDistance,
+      wanted_distance_cm: wantedDistance,
+      scale,
+      scaled_wanted_distance_cm: cameraObjectDistance / scale,
     };
   }
 
-  function sampleText(sample) {
-    if (!sample) return "none";
-    return `${sample.width} x ${sample.height}px at ${sample.distance_cm}cm`;
-  }
-
-  function interpolatePixelSize(close, far, wantedDistance) {
-    const closeInverse  = 1 / close.distance_cm;
-    const farInverse    = 1 / far.distance_cm;
-    const wantedInverse = 1 / wantedDistance;
-    if (Math.abs(closeInverse - farInverse) < 1e-9)
-      throw new Error("Close and far distances must be different.");
-    const solve = (closePixels, farPixels) => {
-      const slope     = (closePixels - farPixels) / (closeInverse - farInverse);
-      const intercept = closePixels - slope * closeInverse;
-      return Math.max(2, Math.min(profileTargetSize, Math.round(slope * wantedInverse + intercept)));
-    };
-    return { width: solve(close.width, far.width), height: solve(close.height, far.height) };
-  }
-
-  function readWantedRange() {
-    const minDistance = readDistance(wantedDistanceMinInput, "wanted min");
-    const maxDistance = readDistance(wantedDistanceMaxInput, "wanted max");
-    if (minDistance > maxDistance)
-      throw new Error("Wanted min distance must be ≤ wanted max distance.");
-    return { minDistance, maxDistance };
-  }
-
-  function computedWantedRange() {
-    if (!closeSample || !farSample) return null;
-    const { minDistance, maxDistance } = readWantedRange();
-    const minSize = interpolatePixelSize(closeSample, farSample, maxDistance);
-    const maxSize = interpolatePixelSize(closeSample, farSample, minDistance);
-    return {
-      min_distance_cm: minDistance,
-      max_distance_cm: maxDistance,
-      min_width:  minSize.width,
-      min_height: minSize.height,
-      max_width:  maxSize.width,
-      max_height: maxSize.height,
-      width:  Math.round((minSize.width  + maxSize.width)  / 2),
-      height: Math.round((minSize.height + maxSize.height) / 2),
-    };
-  }
-
-  function updateCalibrationStats() {
-    closeStatsEl.textContent = sampleText(closeSample);
-    farStatsEl.textContent   = sampleText(farSample);
+  function updateDistanceScaleStats() {
     try {
-      const wanted = computedWantedRange();
-      wantedStatsEl.textContent = wanted
-        ? `${wanted.min_width}-${wanted.max_width} x ${wanted.min_height}-${wanted.max_height}px at ${wanted.min_distance_cm}-${wanted.max_distance_cm}cm`
-        : "none";
+      const profile = readDistanceProfile();
+      distanceScaleStatsEl.textContent = `${profile.scale.toFixed(3)}x, ${profile.scaled_wanted_distance_cm.toFixed(3)}cm`;
     } catch {
-      wantedStatsEl.textContent = "none";
+      distanceScaleStatsEl.textContent = "none";
     }
   }
 
@@ -1595,7 +1339,6 @@
   synthesizeButton.addEventListener("click", async () => {
     try {
       const formData = new FormData();
-      formData.append("total_images", totalImagesInput.value || "100");
       await postForm("/synthesize", formData);
       await refreshProgress();
     } catch (error) {
@@ -1613,129 +1356,24 @@
     }
   });
 
-  // ── Calibration image loading ──────────────────────────────────
-  function loadCalibrationImage(input, role) {
-    const file = input.files[0];
-    if (!file) return;
-    const view  = calibrationViews[role];
-    const image = new Image();
-    image.onload = () => {
-      view.image = image;
-      const maxWidth = 960;
-      view.displayScale  = Math.min(1, maxWidth / image.naturalWidth);
-      view.canvas.width  = Math.max(1, Math.round(image.naturalWidth  * view.displayScale));
-      view.canvas.height = Math.max(1, Math.round(image.naturalHeight * view.displayScale));
-      view.activeBox = null;
-      view.draftBox  = null;
-      view.brightness = 0;
-      if (role === "close") closeSample = null;
-      else farSample = null;
-      drawCanvas(view);
-      updateStats();
-      URL.revokeObjectURL(image.src);
-    };
-    image.src = URL.createObjectURL(file);
-  }
-
-  closeImageInput.addEventListener("change", () => loadCalibrationImage(closeImageInput, "close"));
-  farImageInput.addEventListener("change",   () => loadCalibrationImage(farImageInput,   "far"));
-
-  function bindCanvas(view) {
-    view.canvas.addEventListener("pointerdown", (event) => {
-      if (!view.image) return;
-      view.isDrawing = true;
-      view.canvas.setPointerCapture(event.pointerId);
-      const point = canvasPoint(event, view);
-      view.draftBox = { start: point, end: point };
-    });
-    view.canvas.addEventListener("pointermove", (event) => {
-      if (!view.isDrawing || !view.draftBox) return;
-      view.draftBox.end = canvasPoint(event, view);
-      const box = normalizedBox(view.draftBox.start, view.draftBox.end, view);
-      view.draftBox = { ...view.draftBox, ...box };
-      drawCanvas(view);
-    });
-    view.canvas.addEventListener("pointerup", (event) => {
-      if (!view.isDrawing || !view.draftBox) return;
-      view.isDrawing = false;
-      view.draftBox.end = canvasPoint(event, view);
-      view.activeBox = normalizedBox(view.draftBox.start, view.draftBox.end, view);
-      view.draftBox  = null;
-      drawCanvas(view);
-      updateStats();
-    });
-  }
-
-  bindCanvas(calibrationViews.close);
-  bindCanvas(calibrationViews.far);
-  drawCanvas(calibrationViews.close);
-  drawCanvas(calibrationViews.far);
-
-  clearBoxButton.addEventListener("click", () => {
-    for (const view of Object.values(calibrationViews)) {
-      view.activeBox = null;
-      view.draftBox  = null;
-      view.brightness = 0;
-      drawCanvas(view);
-    }
-    closeSample = null;
-    farSample   = null;
-    updateStats();
-  });
-
-  setCloseButton.addEventListener("click", () => {
-    try {
-      closeSample = captureDistanceSample(closeDistanceInput, "close");
-      updateCalibrationStats();
-    } catch (error) {
-      statusEl.textContent = error.message;
-    }
-  });
-
-  setFarButton.addEventListener("click", () => {
-    try {
-      farSample = captureDistanceSample(farDistanceInput, "far");
-      updateCalibrationStats();
-    } catch (error) {
-      statusEl.textContent = error.message;
-    }
-  });
-
-  wantedDistanceMinInput.addEventListener("input", updateCalibrationStats);
-  wantedDistanceMaxInput.addEventListener("input", updateCalibrationStats);
+  cameraObjectDistanceInput.addEventListener("input", updateDistanceScaleStats);
+  wantedDistanceInput.addEventListener("input", updateDistanceScaleStats);
 
   saveProfileButton.addEventListener("click", async () => {
     try {
-      if (!classSelect.value) throw new Error("Select a class first.");
-      if (!closeSample || !farSample) throw new Error("Set both close and far calibration samples first.");
-      const wantedSize = computedWantedRange();
-      const brightness = (closeSample.brightness + farSample.brightness) / 2;
-      const data = await postJson("/object-profile", {
-        class_name:        classSelect.value,
-        width:             wantedSize.width,
-        height:            wantedSize.height,
-        min_width:         wantedSize.min_width,
-        max_width:         wantedSize.max_width,
-        min_height:        wantedSize.min_height,
-        max_height:        wantedSize.max_height,
-        source_width:      closeSample.source_width,
-        source_height:     closeSample.source_height,
-        target_width:      profileTargetSize,
-        target_height:     profileTargetSize,
-        bbox_x:            closeSample.bbox_x,
-        bbox_y:            closeSample.bbox_y,
-        close_sample:      closeSample,
-        far_sample:        farSample,
-        wanted_distance_cm: (wantedSize.min_distance_cm + wantedSize.max_distance_cm) / 2,
-        min_distance_cm:   wantedSize.min_distance_cm,
-        max_distance_cm:   wantedSize.max_distance_cm,
-        brightness,
-        background_categories: Array.from(
-          document.querySelectorAll('#bgCategoryCheckboxes input[name="bg_category"]:checked')
-        ).map(cb => cb.value),
+      const distanceProfile = readDistanceProfile();
+      const data = await postJson("/object-profiles/distance", {
+        width: profileTargetSize,
+        height: profileTargetSize,
+        camera_object_distance_cm: distanceProfile.camera_object_distance_cm,
+        wanted_distance_cm: distanceProfile.wanted_distance_cm,
+        distance_scale: distanceProfile.scale,
+        scaled_wanted_distance_cm: distanceProfile.scaled_wanted_distance_cm,
       });
-      _objectProfiles[data.class_name] = data.profile;
-      statusEl.textContent = `Saved ${data.class_name}: ${wantedSize.min_width}-${wantedSize.max_width} x ${wantedSize.min_height}-${wantedSize.max_height}px @ ${profileTargetSize}x${profileTargetSize}`;
+      _objectProfiles = data.profiles || _objectProfiles;
+      const savedClasses = data.classes || [];
+      statusEl.textContent = `Saved ${savedClasses.length} class profile(s): camera-to-object ${distanceProfile.camera_object_distance_cm}cm, wanted ${distanceProfile.wanted_distance_cm}cm, scale ${distanceProfile.scale.toFixed(3)}x`;
+      updateDistanceScaleStats();
       await refreshProgress();
     } catch (error) {
       statusEl.textContent = error.message;
@@ -2209,8 +1847,8 @@
     if (!el) return;
     const items = [
       ["Placement",     p2.placement_mode  || "random"],
-      ["Max objects",   p2.max_objects_per_image ?? 15],
-      ["Overlap thr.",  (p2.overlap_threshold_pct ?? 20) + "%"],
+      ["Objects",       "one per class"],
+      ["Overlap",       "none"],
       ["Out-of-frame",  (p2.out_of_frame_pct ?? 10) + "%"],
       ["Brightness ±",  (p2.brightness_variation_pct ?? 10) + "%"],
       ["Contrast ±",    (p2.contrast_variation_pct ?? 20) + "%"],
@@ -2222,9 +1860,14 @@
   }
 
   function updateSplitPreview() {
-    const total = parseInt(document.getElementById("totalImages").value) || 0;
-    fetch("/config").then(r => r.json()).then(cfg => {
+    Promise.all([
+      fetch("/config").then(r => r.json()),
+      fetch("/phase0/status").then(r => r.json()).catch(() => ({})),
+    ]).then(([cfg, status]) => {
       const p2 = cfg.phase2 || {};
+      const classCount = Math.max(1, Object.keys(status || {}).length);
+      const perClass = Math.max(1, Number(p2.expected_images_per_class ?? 1));
+      const total = perClass;
       const trainPct = p2.train_pct ?? 80;
       const valPct   = p2.val_pct   ?? 15;
       const testPct  = p2.test_pct  ?? 5;
@@ -2233,11 +1876,11 @@
       const val   = Math.max(1, Math.round(total * valPct   / tot));
       const test  = Math.max(0, total - train - val);
       const el = document.getElementById("splitPreview");
-      if (el) el.textContent = `→ ${train} train / ${val} val / ${test} test`;
+      if (el) el.textContent = `→ ${total} images, ${classCount} object(s) per image, each class appears ${perClass} time(s): ${train} train / ${val} val / ${test} test`;
     }).catch(() => {});
   }
 
-  document.getElementById("totalImages").addEventListener("input", updateSplitPreview);
+  updateSplitPreview();
 
   document.getElementById("previewBtn").addEventListener("click", async () => {
     const btn = document.getElementById("previewBtn");
@@ -2615,7 +2258,6 @@
   document.getElementById("healthRefreshBtn").addEventListener("click", loadHealthStatus);
 
   // ── Init ───────────────────────────────────────────────────────
-  refreshClasses();
   refreshProgress();
   refreshPaths();
   refreshPhase0Status();

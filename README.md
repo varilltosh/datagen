@@ -218,7 +218,7 @@ Open your browser at **http://127.0.0.1:5000**.
 
 **Distance calibration (optional)**
 
-If you want distance-based bounding box size hints for synthesis, use the **Distance Calibration & Object Profile** tool. This is optional — synthesis will work without it.
+If you want distance-based object sizing for synthesis, use the **Distance Calibration & Object Profile** tool. Enter the wanted distance range and optional object max range in centimeters. When an object max range is saved, synthesis samples a camera-to-object distance up to that range and scales the original object pixels by `object_max_range_cm / sampled_distance_cm`. This is optional — synthesis will work without it.
 
 **Background categories (optional)**
 

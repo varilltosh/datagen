@@ -9,7 +9,7 @@ from pathlib import Path
 import cv2
 
 
-VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".move", ".avi", ".mkv", ".webm", ".m4v"}
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 
 

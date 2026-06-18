@@ -7,7 +7,7 @@ phase1:
   expected_images_per_class: 108
   min_backgrounds_per_category: 15
 phase2:
-  blur_max_pct: 15
+  blur_max_pct: 0
   brightness_variation_pct: 10
   contrast_variation_pct: 20
   grid_cols: 3
