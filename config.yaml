@@ -19,20 +19,23 @@ phase2:
   - '640'
   overlap_threshold_pct: 20
   placement_mode: random
+  position_grid_cols: 6
+  position_grid_rows: 6
   start_idx: 0
-  test_pct: 5
-  train_pct: 80
-  val_pct: 15
+  sweep_reference_px: 200
+  test_pct: 0
+  train_pct: 60
+  val_pct: 40
 phase3:
-  batch: 4
-  cls_loss_acceptable: 1
+  batch: 8
+  cls_loss_acceptable: 0.2
   cls_loss_excellent: 0.01
   device: '0'
-  epochs: 3
+  epochs: 100
   imgsz: 640
   model: models/yolov8s.pt
   name: train
-  patience: 20
+  patience: 10
   project: runs/detect
   tune_epochs: 0
   tune_iterations: 0

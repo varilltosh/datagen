@@ -35,7 +35,12 @@ PHASE1_DIR = DATA_DIR / "phase1"
 PHASE4_DIR = DATA_DIR / "phase4"
 SYNTH_IMAGE_DIR = DATA_DIR / "sythesized_data"
 YOLO_IMAGE_ALIAS_DIR = DATA_DIR / "images"
-SYNTH_LABEL_DIR = DATA_DIR / "labels"
+# Labels live *inside* each image split folder (sythesized_data/<split>/*.txt),
+# not in a separate labels/ tree. YOLO resolves the images→sythesized_data
+# symlink, so the resolved image path loses the "/images/" segment and the
+# images→labels path swap can't fire — it then looks for each label next to
+# its image. Keeping labels alongside images is what makes them discoverable.
+SYNTH_LABEL_DIR = SYNTH_IMAGE_DIR
 YOLO_DATASET_YAML = DATA_DIR / "sythesized_data.yaml"
 OBJECT_PROFILE_JSON = DATA_DIR / "object_profiles.json"
 FRAME_STRIDE_SCRIPT = PROJECT_DIR / "scripts" / "frame_stride.py"
@@ -119,9 +124,20 @@ DEFAULT_CONFIG: dict = {
         "overlap_threshold_pct": 20,
         "placement_mode": "random",
         "start_idx": 0,
-        "test_pct": 5,
-        "train_pct": 80,
-        "val_pct": 15,
+        "test_pct": 0,
+        "train_pct": 60,
+        "val_pct": 40,
+        # Systematic distance/scale sweep: one image per 1px step of a
+        # `sweep_reference_px`-wide reference object, from full size (close)
+        # down to size*min_scale (far). The whole pool is synthesized with full
+        # position × scale coverage, then split randomly into train/val by the
+        # *_pct ratios above (test_pct is unused — no test set).
+        "sweep_reference_px": 200,
+        # Placement grid: objects are pinned to grid cells so every class visits
+        # every cell at every scale. The grid is shared (no per-split cells);
+        # train/val independence comes from the random split.
+        "position_grid_rows": 6,
+        "position_grid_cols": 6,
     },
     "phase3": {
         "batch": 4,
@@ -836,6 +852,25 @@ def object_shape(object_image) -> tuple[int, int]:
     return object_image.shape[:2]
 
 
+def distance_scale_bounds(size_profile: dict | None) -> tuple[float, float] | None:
+    """Return (min_scale, max_scale) for a profile's distance sweep, or None.
+
+    The scale factor moves the object between its smallest (far) and largest
+    (close) on-canvas size. max_scale is always 1.0; min_scale is the
+    camera/wanted distance ratio (e.g. 35cm/210cm = 0.167)."""
+    if not size_profile:
+        return None
+    try:
+        d = float(size_profile.get("camera_object_distance_cm", 0) or 0)
+        w = float(size_profile.get("wanted_distance_cm", 0) or 0)
+        distance_scale = d / w
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+    if distance_scale <= 0:
+        return None
+    return tuple(sorted((1.0, distance_scale)))  # (min_scale, max_scale)
+
+
 def distance_scaled_object_size(
     obj_w: int,
     obj_h: int,
@@ -843,6 +878,7 @@ def distance_scaled_object_size(
     video_height: int,
     size_profile: dict | None,
     rng: random.Random,
+    forced_scale: float | None = None,
 ) -> tuple[int, int] | None:
     if not size_profile:
         return None
@@ -862,10 +898,15 @@ def distance_scaled_object_size(
     except (TypeError, ValueError, ZeroDivisionError):
         distance_scale = 0.0
     if distance_scale > 0:
-        # Step 3: Sample one scale factor so width and height move together
-        # from the smallest object size to the largest object size.
+        # Step 3: Pick one scale factor so width and height move together
+        # from the smallest object size to the largest object size. During a
+        # systematic sweep `forced_scale` pins this to an exact step; otherwise
+        # it is sampled at random within the range.
         min_scale, max_scale = sorted((1.0, distance_scale))
-        sampled_scale = rng.uniform(min_scale, max_scale)
+        if forced_scale is not None:
+            sampled_scale = max(min_scale, min(max_scale, forced_scale))
+        else:
+            sampled_scale = rng.uniform(min_scale, max_scale)
         new_w = int(round(smallest_w * sampled_scale))
         new_h = int(round(smallest_h * sampled_scale))
         fit_scale = min(1.0, video_width / max(1, new_w), video_height / max(1, new_h))
@@ -916,6 +957,8 @@ def paste_object(
     out_of_frame_pct: float = 0.0,
     overlap_threshold_pct: float = 0,
     max_attempts: int = 100,
+    forced_scale: float | None = None,
+    position_cells: list[tuple[int, int, int, int]] | None = None,
 ) -> tuple[any, tuple[int, int, int, int]] | None:
     canvas_h, canvas_w = canvas_shape(canvas)
     obj_h, obj_w = object_shape(object_image)
@@ -925,7 +968,7 @@ def paste_object(
     placed = None
     for _ in range(max_attempts):
         distance_scaled_size = distance_scaled_object_size(
-            obj_w, obj_h, canvas_w, canvas_h, size_profile, rng,
+            obj_w, obj_h, canvas_w, canvas_h, size_profile, rng, forced_scale,
         )
         if distance_scaled_size is not None:
             new_w, new_h = distance_scaled_size
@@ -944,7 +987,29 @@ def paste_object(
             new_w = max(2, min(canvas_w, int(obj_w * scale)))
             new_h = max(2, min(canvas_h, int(obj_h * scale)))
 
-        if grid_cell is not None:
+        if position_cells:
+            # Aim the object's CENTRE at a point inside one of the allowed cells
+            # (the cell is a target location, not a box the object must fit in —
+            # objects are routinely larger than a cell). The centre is then
+            # clamped so the whole object stays on-canvas. This lets the object
+            # centroid walk every grid cell while always being placeable; only
+            # an object larger than the entire canvas is rejected (retry smaller).
+            pcx, pcy, pcw, pch = rng.choice(position_cells)
+            cx_min, cx_max = new_w // 2, canvas_w - (new_w - new_w // 2)
+            cy_min, cy_max = new_h // 2, canvas_h - (new_h - new_h // 2)
+            if cx_min > cx_max or cy_min > cy_max:
+                continue  # object bigger than the canvas — retry at a smaller scale
+            des_x = rng.randint(pcx, pcx + pcw - 1)
+            des_y = rng.randint(pcy, pcy + pch - 1)
+            center_x = min(max(des_x, cx_min), cx_max)
+            center_y = min(max(des_y, cy_min), cy_max)
+            x = center_x - new_w // 2
+            y = center_y - new_h // 2
+            vis_box = (x, y, new_w, new_h)
+            if not any(boxes_overlap(vis_box, box, overlap_threshold_pct) for box in occupied_boxes):
+                placed = (x, y, new_w, new_h)
+                break
+        elif grid_cell is not None:
             cx, cy, cw, ch = grid_cell
             x = rng.randint(cx, max(cx, cx + cw - new_w))
             y = rng.randint(cy, max(cy, cy + ch - new_h))
@@ -1060,7 +1125,6 @@ def write_yaml(names: list[str]) -> None:
         f"path: {DATA_DIR}",
         "train: images/train",
         "val: images/validate",
-        "test: images/test",
         f"nc: {len(names)}",
         "names:",
     ]
@@ -1137,6 +1201,46 @@ def _build_sources(names: list[str]) -> dict[str, list[tuple[Path, Path]]]:
     return sources
 
 
+def partition_position_cells(
+    rows: int, cols: int, train_pct: int, val_pct: int, test_pct: int,
+    seed: int = 20240601,
+) -> dict[str, list[tuple[int, int]]]:
+    """Split a rows×cols grid of logical (row, col) cells into disjoint
+    train / validate / test pools. Deterministic (fixed seed) so the same
+    cells are always reserved for each split — that is what guarantees a
+    val/test object centre never lands in a cell training could have used."""
+    cells = [(r, c) for r in range(rows) for c in range(cols)]
+    random.Random(seed).shuffle(cells)
+    total = max(1, train_pct + val_pct + test_pct)
+    n = len(cells)
+    n_val = max(1, round(n * val_pct / total)) if val_pct > 0 else 0
+    n_test = max(1, round(n * test_pct / total)) if test_pct > 0 else 0
+    n_train = max(1, n - n_val - n_test)
+    return {
+        "train": cells[:n_train],
+        "validate": cells[n_train:n_train + n_val],
+        "test": cells[n_train + n_val:n_train + n_val + n_test],
+    }
+
+
+def cells_to_pixels(
+    logical_cells: list[tuple[int, int]], rows: int, cols: int,
+    canvas_w: int, canvas_h: int,
+) -> list[tuple[int, int, int, int]]:
+    """Map logical (row, col) cells to pixel rectangles on the current canvas."""
+    cw = max(1, canvas_w // cols)
+    ch = max(1, canvas_h // rows)
+    return [(c * cw, r * ch, cw, ch) for (r, c) in logical_cells]
+
+
+def sweep_scale(index: int, count: int, min_scale: float) -> float:
+    """Scale for image `index` of `count`, stepping evenly from 1.0 (close /
+    largest) down to `min_scale` (far / smallest)."""
+    if count <= 1:
+        return 1.0
+    return 1.0 - (index / (count - 1)) * (1.0 - min_scale)
+
+
 def synthesize_split(
     split: str,
     count: int,
@@ -1149,6 +1253,11 @@ def synthesize_split(
     progress_end: int,
     start_idx: int = 0,
     sources: dict | None = None,
+    min_scale: float | None = None,
+    position_cells_logical: list[tuple[int, int]] | None = None,
+    pos_rows: int = 6,
+    pos_cols: int = 6,
+    scale_steps: int | None = None,
 ) -> int:
     if sources is None:
         sources = _build_sources(names)
@@ -1208,6 +1317,34 @@ def synthesize_split(
             rng.shuffle(cells)
             grid_cells = cells
 
+        # Disjoint placement region for this split (train cells never overlap
+        # val/test cells), mapped to the current canvas size.
+        position_cells = (
+            cells_to_pixels(position_cells_logical, pos_rows, pos_cols, canvas_w, canvas_h)
+            if position_cells_logical else None
+        )
+        num_cells = len(position_cells) if position_cells else 0
+
+        # Systematic position × scale grid. The dataset is the Cartesian product
+        # of every scale step (close→far) and every placement cell: image index
+        # `saved` decodes to one (scale_idx, pos_idx) pair, so over the whole
+        # split each class visits every cell at every scale. When there are at
+        # least as many cells as classes, every class gets its own distinct
+        # cell this image (offset so no two classes collide and, across pos_idx,
+        # each class sweeps all cells). Otherwise we fall back to free choice
+        # within the pool for that (small) split.
+        systematic = bool(scale_steps and num_cells)
+        strict_cells = systematic and num_cells >= len(names)
+        if systematic:
+            scale_idx = saved // num_cells
+            pos_idx = saved % num_cells
+            forced_scale = sweep_scale(scale_idx, scale_steps, min_scale) if min_scale is not None else None
+        else:
+            # Systematic distance sweep only: every object in this image sits at
+            # the same scale step, walking from largest (close) to smallest (far).
+            forced_scale = sweep_scale(saved, count, min_scale) if min_scale is not None else None
+            pos_idx = 0
+
         labels: list[str] = []
         occupied_boxes: list[tuple[int, int, int, int]] = []
 
@@ -1219,9 +1356,16 @@ def synthesize_split(
             if loaded is None:
                 continue
             grid_cell = grid_cells[obj_idx % len(grid_cells)] if grid_cells else None
+            # Pin this class to its own cell so it walks every position across
+            # the split; small splits (fewer cells than classes) keep the pool.
+            obj_position_cells = (
+                [position_cells[(pos_idx + obj_idx) % num_cells]]
+                if strict_cells else position_cells
+            )
             pasted = paste_object(
                 canvas, loaded[0], loaded[1], rng, occupied_boxes, device,
                 object_profile, grid_cell, out_of_frame, 0,
+                forced_scale=forced_scale, position_cells=obj_position_cells,
             )
             if pasted is None:
                 continue
@@ -1241,13 +1385,34 @@ def synthesize_split(
             set_job(
                 stage=f"Synthesizing {split}",
                 percent=min(progress_end, pct),
-                message=f"{split}: {saved}/{count} image(s)",
+                message=f"({saved}/{count}) → {image_output}/{stem}.jpg",
             )
 
     new_saved = saved - start_idx
     if new_saved < new_count:
         raise RuntimeError(f"Only generated {new_saved}/{new_count} new {split} image(s). Try smaller object sizes or less restrictive placement settings.")
     return saved
+
+
+def random_split_train_val(val_fraction: float, rng: random.Random) -> tuple[int, int]:
+    """Randomly move `val_fraction` of the generated train image/label pairs
+    into the validate split. The whole pool is synthesized into train/ first;
+    this carves out a random hold-out so train and val are independent samples
+    of the same distribution. Returns (train_count, val_count) after the move."""
+    train_img, train_lbl = SYNTH_IMAGE_DIR / "train", SYNTH_LABEL_DIR / "train"
+    val_img,   val_lbl   = SYNTH_IMAGE_DIR / "validate", SYNTH_LABEL_DIR / "validate"
+    for d in (val_img, val_lbl):
+        d.mkdir(parents=True, exist_ok=True)
+
+    stems = [p.stem for p in train_img.glob("*.jpg")]
+    rng.shuffle(stems)
+    n_val = round(len(stems) * val_fraction)
+
+    for i, stem in enumerate(stems[:n_val]):
+        dst = f"validate_{i:06d}"
+        (train_img / f"{stem}.jpg").replace(val_img / f"{dst}.jpg")
+        (train_lbl / f"{stem}.txt").replace(val_lbl / f"{dst}.txt")
+    return len(stems) - n_val, n_val
 
 
 def synthesize_dataset(images_per_class: int) -> None:
@@ -1271,15 +1436,9 @@ def synthesize_dataset(images_per_class: int) -> None:
             raise RuntimeError(f"No background images found in {BG_DIR}")
 
         start_idx    = max(0, get_cfg("phase2", "start_idx", default=0))
-        train_pct    = get_cfg("phase2", "train_pct",  default=80)
-        val_pct      = get_cfg("phase2", "val_pct",    default=15)
-        test_pct     = get_cfg("phase2", "test_pct",   default=5)
-        total_pct    = max(1, train_pct + val_pct + test_pct)
+        train_pct    = get_cfg("phase2", "train_pct",  default=60)
+        val_pct      = get_cfg("phase2", "val_pct",    default=40)
         images_per_class = max(1, images_per_class)
-        total_images = images_per_class
-        train_count  = max(1, round(total_images * train_pct  / total_pct))
-        val_count    = max(1, round(total_images * val_pct    / total_pct))
-        test_count   = max(0, total_images - train_count - val_count)
 
         rng = random.Random()
 
@@ -1295,11 +1454,53 @@ def synthesize_dataset(images_per_class: int) -> None:
         bg_pool_per_class = _build_bg_pool_per_class(names, backgrounds, object_profiles)
         placement_mode = get_cfg("phase2", "placement_mode", default="random")
 
+        # Image count is *calculated* from the distance/scale sweep, not fixed.
+        # Take the widest scale range across classes (smallest min_scale = the
+        # farthest distance). One training image per 1px step of a reference
+        # object that spans `sweep_reference_px` .. sweep_reference_px*min_scale.
+        class_min_scales = [
+            b[0] for b in (distance_scale_bounds(object_profiles.get(n)) for n in names)
+            if b is not None
+        ]
+        min_scale = min(class_min_scales) if class_min_scales else None
+
+        # One shared placement grid for the whole pool — no per-split disjoint
+        # cells. Every image may use any cell; train/val independence comes from
+        # the random split below, not from where objects are placed.
+        pos_rows = max(1, get_cfg("phase2", "position_grid_rows", default=6))
+        pos_cols = max(1, get_cfg("phase2", "position_grid_cols", default=6))
+        all_cells_logical = [(r, c) for r in range(pos_rows) for c in range(pos_cols)]
+
+        # Synthesize one flat pool (full position × scale coverage), then split
+        # it randomly into train/val by the configured ratios (no test set).
+        val_fraction = val_pct / max(1, train_pct + val_pct)
+
+        scale_steps = None
+        if min_scale is not None:
+            ref_px      = max(2, int(get_cfg("phase2", "sweep_reference_px", default=200)))
+            # Number of 1px scale steps from full size (close) to far size.
+            scale_steps = max(1, round(ref_px * (1.0 - min_scale)))
+            # Full systematic coverage: every scale step × every placement cell.
+            pool_count = scale_steps * len(all_cells_logical)
+        else:
+            # No distance profile → fall back to the configured fixed count.
+            pool_count = max(1, images_per_class)
+        total_images = pool_count
+
         append_log(f"Classes: {', '.join(names)}")
         append_log(f"Images to synthesize: {total_images} | objects per image: {len(names)}")
+        append_log(f"Saving images to: {SYNTH_IMAGE_DIR}")
+        append_log(f"Saving labels to: {SYNTH_LABEL_DIR}")
+        if min_scale is not None:
+            append_log(
+                f"Scale sweep: {ref_px}px → {round(ref_px * min_scale)}px "
+                f"(×1.0 → ×{min_scale:.3f}) in {scale_steps} steps | "
+                f"position grid {pos_rows}×{pos_cols} = {len(all_cells_logical)} cells | "
+                f"pool = {scale_steps} scales × {len(all_cells_logical)} cells = {pool_count} image(s)"
+            )
         append_log(f"Device: {device}" + (f" ({torch.cuda.get_device_name(device)})" if device.type == "cuda" else ""))
         append_log(f"Placement: {placement_mode} | one object per class per image")
-        append_log(f"Split: {train_count} train / {val_count} val / {test_count} test" +
+        append_log(f"Random split: train {train_pct} / val {val_pct} (no test)" +
                    (f" (resuming from idx {start_idx})" if start_idx > 0 else ""))
         for n in names:
             cats = (object_profiles.get(n) or {}).get("background_categories") or []
@@ -1308,21 +1509,20 @@ def synthesize_dataset(images_per_class: int) -> None:
                 append_log(f"  {n}: bg restricted to {cats} ({pool_size} image(s))")
 
         kw = dict(names=names, bg_pool_per_class=bg_pool_per_class, rng=rng, device=device,
-                  object_profiles=object_profiles, start_idx=start_idx, sources=sources)
+                  object_profiles=object_profiles, start_idx=start_idx, sources=sources,
+                  min_scale=min_scale, pos_rows=pos_rows, pos_cols=pos_cols,
+                  scale_steps=scale_steps)
 
         t0 = time.perf_counter()
-        train_saved = synthesize_split("train",    train_count, progress_start=10, progress_end=55, **kw)
-        append_log(f"Train: {train_saved} image(s) in {format_duration(time.perf_counter() - t0)}.")
+        pool_saved = synthesize_split("train", pool_count, progress_start=10, progress_end=90,
+                                      position_cells_logical=all_cells_logical, **kw)
+        append_log(f"Pool: {pool_saved} image(s) in {format_duration(time.perf_counter() - t0)}.")
 
-        t1 = time.perf_counter()
-        val_saved = synthesize_split("validate",   val_count,   progress_start=55, progress_end=85, **kw)
-        append_log(f"Validate: {val_saved} image(s) in {format_duration(time.perf_counter() - t1)}.")
-
+        # Randomly move val_fraction of the generated pool into the validate split.
+        set_job(stage="Splitting train/val", percent=92, message="Random train/val split")
+        train_saved, val_saved = random_split_train_val(val_fraction, rng)
         test_saved = 0
-        if test_count > 0:
-            t2 = time.perf_counter()
-            test_saved = synthesize_split("test",  test_count,  progress_start=85, progress_end=97, **kw)
-            append_log(f"Test: {test_saved} image(s) in {format_duration(time.perf_counter() - t2)}.")
+        append_log(f"Split: {train_saved} train / {val_saved} val (random, no test).")
 
         write_yaml(names)
         total_elapsed = format_duration(time.perf_counter() - total_started_at)
@@ -1342,8 +1542,9 @@ def synthesize_dataset(images_per_class: int) -> None:
         (DATA_DIR / "generation_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
 
         append_log(f"Total: {total_elapsed}.")
+        append_log(f"Images saved in: {SYNTH_IMAGE_DIR} (train/ + validate/)")
         set_job(stage="Complete", percent=100,
-                message=f"Done in {total_elapsed}: {train_saved} train / {val_saved} val / {test_saved} test.")
+                message=f"Done in {total_elapsed}: {train_saved} train / {val_saved} val → {SYNTH_IMAGE_DIR}")
     except Exception as exc:
         append_log(str(exc))
         set_job(stage="Error", error=str(exc), message=str(exc))
