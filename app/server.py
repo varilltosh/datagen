@@ -6,6 +6,7 @@ import json
 import re
 import random
 import shutil
+import statistics
 import subprocess
 import sys
 import threading
@@ -746,6 +747,39 @@ def apply_blur(image: np.ndarray, mask: np.ndarray, rng: random.Random) -> np.nd
     return np.where(object_pixels[..., None], blurred, image)
 
 
+def apply_geometric_augmentation(
+    image: np.ndarray, mask: np.ndarray, rng: random.Random,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Color-safe geometric augmentation: random horizontal flip + small
+    rotation, applied identically to the object image and its mask. Adds pose /
+    orientation variety (which photometric augmentation cannot) without touching
+    hue or saturation, so colour class cues (e.g. a green cup) are preserved.
+    Used both during synthesis and to upsample under-represented classes with
+    fresh, non-duplicated images."""
+    hflip_pct      = get_cfg("phase2", "hflip_pct", default=50) / 100.0
+    rotate_max_deg = float(get_cfg("phase2", "rotate_max_deg", default=15))
+
+    if hflip_pct > 0 and rng.random() < hflip_pct:
+        image = cv2.flip(image, 1)
+        mask = cv2.flip(mask, 1)
+
+    if rotate_max_deg > 0:
+        angle = rng.uniform(-rotate_max_deg, rotate_max_deg)
+        if abs(angle) > 0.1:
+            h, w = image.shape[:2]
+            cx, cy = w / 2.0, h / 2.0
+            m = cv2.getRotationMatrix2D((cx, cy), angle, 1.0)
+            cos, sin = abs(m[0, 0]), abs(m[0, 1])
+            # Expand the output canvas so corners are never clipped.
+            new_w = int(round(h * sin + w * cos))
+            new_h = int(round(h * cos + w * sin))
+            m[0, 2] += new_w / 2.0 - cx
+            m[1, 2] += new_h / 2.0 - cy
+            image = cv2.warpAffine(image, m, (new_w, new_h), flags=cv2.INTER_LINEAR, borderValue=0)
+            mask = cv2.warpAffine(mask, m, (new_w, new_h), flags=cv2.INTER_NEAREST, borderValue=0)
+    return image, mask
+
+
 def normalize_object_mask(
     mask: np.ndarray,
     alpha: np.ndarray | None,
@@ -806,6 +840,7 @@ def load_object(
     image = adjust_object_brightness(image, mask, rng, profile)
     image = apply_contrast(image, mask, rng)
     image = apply_blur(image, mask, rng)
+    image, mask = apply_geometric_augmentation(image, mask, rng)
     if device.type == "cuda":
         image_tensor = torch.from_numpy(image).to(device=device, dtype=torch.float32).permute(2, 0, 1)
         mask_tensor = torch.from_numpy(mask).to(device=device)
@@ -1182,6 +1217,35 @@ def _build_bg_pool_per_class(
     return {name: _bg_pool_for_class(name, all_backgrounds, object_profiles) for name in names}
 
 
+def measure_class_reference_px(
+    names: list[str],
+    sources: dict[str, list[tuple[Path, Path]]],
+    device: torch.device,
+    rng: random.Random,
+    object_profiles: dict,
+    sample: int = 40,
+) -> dict[str, int]:
+    """Measure each class's on-screen reference pixel size (the larger of the
+    object's width/height) from its Phase-1 cutouts. This is the "close" size
+    the distance sweep starts from; multiplied by the shared scale range it
+    defines that class's own pixel range. Bigger objects therefore get more
+    1px steps and stay in more images; smaller objects exhaust their range
+    sooner and drop out. Returns {class_name: median_max_dim_px}."""
+    ref_px: dict[str, int] = {}
+    for name in names:
+        pairs = sources[name]
+        picks = pairs if len(pairs) <= sample else rng.sample(pairs, sample)
+        dims: list[int] = []
+        for img_path, mask_path in picks:
+            loaded = load_object(img_path, mask_path, device, rng, object_profiles.get(name))
+            if loaded is None:
+                continue
+            oh, ow = object_shape(loaded[0])
+            dims.append(max(oh, ow))
+        ref_px[name] = int(statistics.median(dims)) if dims else 2
+    return ref_px
+
+
 def _build_sources(names: list[str]) -> dict[str, list[tuple[Path, Path]]]:
     sources: dict[str, list[tuple[Path, Path]]] = {}
     for name in names:
@@ -1258,6 +1322,9 @@ def synthesize_split(
     pos_rows: int = 6,
     pos_cols: int = 6,
     scale_steps: int | None = None,
+    class_steps: dict[str, int] | None = None,
+    scale_min: float = 0.166667,
+    scale_max: float = 1.0,
 ) -> int:
     if sources is None:
         sources = _build_sources(names)
@@ -1338,17 +1405,31 @@ def synthesize_split(
         if systematic:
             scale_idx = saved // num_cells
             pos_idx = saved % num_cells
-            forced_scale = sweep_scale(scale_idx, scale_steps, min_scale) if min_scale is not None else None
         else:
-            # Systematic distance sweep only: every object in this image sits at
-            # the same scale step, walking from largest (close) to smallest (far).
-            forced_scale = sweep_scale(saved, count, min_scale) if min_scale is not None else None
+            scale_idx = saved
             pos_idx = 0
+
+        # Per-class forced scale for this image. Each class walks its OWN pixel
+        # range (close→far) over its own number of steps; once scale_idx passes
+        # a class's last step it has finished sweeping and simply isn't placed in
+        # this (or any later) image. forced=None → class not present this image.
+        def _forced_scale_for(name: str) -> float | None:
+            steps = (class_steps or {}).get(name, scale_steps or 1)
+            if scale_idx >= steps:
+                return None  # class exhausted its range — drop out
+            if steps <= 1:
+                return scale_max
+            return scale_max - (scale_idx / (steps - 1)) * (scale_max - scale_min)
+
+        present_classes = [n for n in names if _forced_scale_for(n) is not None]
 
         labels: list[str] = []
         occupied_boxes: list[tuple[int, int, int, int]] = []
 
         for obj_idx, class_name in enumerate(names):
+            forced_scale = _forced_scale_for(class_name)
+            if forced_scale is None:
+                continue  # this class has finished its sweep — skip it
             class_id     = names.index(class_name)
             object_pair  = rng.choice(sources[class_name])
             object_profile = object_profiles.get(class_name)
@@ -1374,7 +1455,9 @@ def synthesize_split(
             ch, cw = canvas_shape(canvas)
             labels.append(f"{class_id} {(vx + vw/2)/cw:.6f} {(vy + vh/2)/ch:.6f} {vw/cw:.6f} {vh/ch:.6f}")
 
-        if len(labels) != len(names):
+        # Keep only fully-populated images: every class that should appear at this
+        # scale step must have placed successfully (retry otherwise).
+        if not labels or len(labels) != len(present_classes):
             continue
 
         cv2.imwrite(str(image_output / f"{stem}.jpg"), canvas_to_image(canvas))
@@ -1392,6 +1475,77 @@ def synthesize_split(
     if new_saved < new_count:
         raise RuntimeError(f"Only generated {new_saved}/{new_count} new {split} image(s). Try smaller object sizes or less restrictive placement settings.")
     return saved
+
+
+def synthesize_extra(
+    split: str,
+    class_name: str,
+    class_id: int,
+    n_needed: int,
+    start_idx: int,
+    bg_pool: list[Path],
+    rng: random.Random,
+    device: torch.device,
+    object_profile: dict | None,
+    sources: dict,
+    scale_min: float,
+    scale_max: float,
+    progress_start: int,
+    progress_end: int,
+) -> int:
+    """Upsample one under-represented class with EXTRA, distinct images (never
+    duplicated files). Each image is a fresh solo composite: random background,
+    random free position, a random scale within the class's range, plus the
+    object augmentation pipeline (brightness/contrast/blur + flip/rotation). The
+    pixel content differs every time, so balancing class counts this way adds no
+    memorisation/overfitting that copying files would. Returns the next free
+    image index."""
+    image_output = SYNTH_IMAGE_DIR / split
+    label_output = SYNTH_LABEL_DIR / split
+    image_output.mkdir(parents=True, exist_ok=True)
+    label_output.mkdir(parents=True, exist_ok=True)
+    out_of_frame = float(get_cfg("phase2", "out_of_frame_pct", default=10)) / 100.0
+
+    idx = start_idx
+    saved = 0
+    attempts = 0
+    max_attempts = max(n_needed * 30, 30)
+    while saved < n_needed and attempts < max_attempts:
+        attempts += 1
+        stem = f"{split}_{idx:06d}"
+        if (image_output / f"{stem}.jpg").exists():
+            idx += 1
+            continue
+        background = cv2.imread(str(rng.choice(bg_pool)), cv2.IMREAD_COLOR)
+        if background is None:
+            continue
+        canvas = canvas_from_background(background, device)
+        object_pair = rng.choice(sources[class_name])
+        loaded = load_object(*object_pair, device, rng, object_profile)
+        if loaded is None:
+            continue
+        forced_scale = rng.uniform(scale_min, scale_max)
+        pasted = paste_object(
+            canvas, loaded[0], loaded[1], rng, [], device,
+            object_profile, None, out_of_frame, 0, forced_scale=forced_scale,
+        )
+        if pasted is None:
+            continue
+        canvas, (vx, vy, vw, vh) = pasted
+        ch, cw = canvas_shape(canvas)
+        label = f"{class_id} {(vx + vw/2)/cw:.6f} {(vy + vh/2)/ch:.6f} {vw/cw:.6f} {vh/ch:.6f}"
+        cv2.imwrite(str(image_output / f"{stem}.jpg"), canvas_to_image(canvas))
+        (label_output / f"{stem}.txt").write_text(label + "\n", encoding="utf-8")
+        saved += 1
+        idx += 1
+        if n_needed > 0:
+            pct = progress_start + round((progress_end - progress_start) * saved / n_needed)
+            set_job(
+                stage=f"Balancing {class_name}",
+                percent=min(progress_end, pct),
+                message=f"+{class_name} ({saved}/{n_needed}) → {image_output}/{stem}.jpg",
+            )
+    return idx
 
 
 def random_split_train_val(val_fraction: float, rng: random.Random) -> tuple[int, int]:
@@ -1454,15 +1608,23 @@ def synthesize_dataset(images_per_class: int) -> None:
         bg_pool_per_class = _build_bg_pool_per_class(names, backgrounds, object_profiles)
         placement_mode = get_cfg("phase2", "placement_mode", default="random")
 
-        # Image count is *calculated* from the distance/scale sweep, not fixed.
-        # Take the widest scale range across classes (smallest min_scale = the
-        # farthest distance). One training image per 1px step of a reference
-        # object that spans `sweep_reference_px` .. sweep_reference_px*min_scale.
-        class_min_scales = [
-            b[0] for b in (distance_scale_bounds(object_profiles.get(n)) for n in names)
-            if b is not None
-        ]
-        min_scale = min(class_min_scales) if class_min_scales else None
+        # Per-class distance sweep. Every class is measured from its own Phase-1
+        # cutouts (its "close" reference pixel size), then walked down a SHARED
+        # scale range [scale_min, scale_max]. Each class therefore has its own
+        # pixel range and its own number of 1px steps: a big object (e.g. a tall
+        # bottle) gets many steps and appears in many images, a small object
+        # (e.g. an inhaler) gets fewer steps and drops out of later images once
+        # it has swept its whole range. The pool length is driven by the class
+        # with the most steps.
+        scale_min = float(get_cfg("phase2", "scale_min", default=0.166667))
+        scale_max = float(get_cfg("phase2", "scale_max", default=1.0))
+        if scale_max <= scale_min:
+            scale_max = scale_min + 1e-3
+        class_ref_px = measure_class_reference_px(names, sources, device, rng, object_profiles)
+        class_steps = {
+            n: max(1, round(class_ref_px[n] * (scale_max - scale_min))) for n in names
+        }
+        min_scale = scale_min  # kept for downstream (forced-scale clamp / sweep)
 
         # One shared placement grid for the whole pool — no per-split disjoint
         # cells. Every image may use any cell; train/val independence comes from
@@ -1475,31 +1637,30 @@ def synthesize_dataset(images_per_class: int) -> None:
         # it randomly into train/val by the configured ratios (no test set).
         val_fraction = val_pct / max(1, train_pct + val_pct)
 
-        scale_steps = None
-        if min_scale is not None:
-            ref_px      = max(2, int(get_cfg("phase2", "sweep_reference_px", default=200)))
-            # Number of 1px scale steps from full size (close) to far size.
-            scale_steps = max(1, round(ref_px * (1.0 - min_scale)))
-            # Full systematic coverage: every scale step × every placement cell.
-            pool_count = scale_steps * len(all_cells_logical)
-        else:
-            # No distance profile → fall back to the configured fixed count.
-            pool_count = max(1, images_per_class)
+        # Full systematic coverage: (longest class's scale steps) × every cell.
+        scale_steps = max(class_steps.values())
+        pool_count = scale_steps * len(all_cells_logical)
         total_images = pool_count
 
         append_log(f"Classes: {', '.join(names)}")
-        append_log(f"Images to synthesize: {total_images} | objects per image: {len(names)}")
+        append_log(f"Images to synthesize: {total_images} | up to {len(names)} objects per image")
         append_log(f"Saving images to: {SYNTH_IMAGE_DIR}")
         append_log(f"Saving labels to: {SYNTH_LABEL_DIR}")
-        if min_scale is not None:
+        append_log(
+            f"Shared scale range: ×{scale_max:.3f} (close) → ×{scale_min:.3f} (far) | "
+            f"position grid {pos_rows}×{pos_cols} = {len(all_cells_logical)} cells | "
+            f"pool = {scale_steps} scales × {len(all_cells_logical)} cells = {pool_count} image(s)"
+        )
+        for n in names:
+            steps = class_steps[n]
             append_log(
-                f"Scale sweep: {ref_px}px → {round(ref_px * min_scale)}px "
-                f"(×1.0 → ×{min_scale:.3f}) in {scale_steps} steps | "
-                f"position grid {pos_rows}×{pos_cols} = {len(all_cells_logical)} cells | "
-                f"pool = {scale_steps} scales × {len(all_cells_logical)} cells = {pool_count} image(s)"
+                f"  {n}: ref {class_ref_px[n]}px → range {round(class_ref_px[n]*scale_max)}px"
+                f"→{round(class_ref_px[n]*scale_min)}px in {steps} steps "
+                f"(appears in {min(steps, scale_steps) * len(all_cells_logical)} image(s), "
+                f"then drops out)"
             )
         append_log(f"Device: {device}" + (f" ({torch.cuda.get_device_name(device)})" if device.type == "cuda" else ""))
-        append_log(f"Placement: {placement_mode} | one object per class per image")
+        append_log(f"Placement: {placement_mode} | each class sweeps its own pixel range")
         append_log(f"Random split: train {train_pct} / val {val_pct} (no test)" +
                    (f" (resuming from idx {start_idx})" if start_idx > 0 else ""))
         for n in names:
@@ -1511,12 +1672,46 @@ def synthesize_dataset(images_per_class: int) -> None:
         kw = dict(names=names, bg_pool_per_class=bg_pool_per_class, rng=rng, device=device,
                   object_profiles=object_profiles, start_idx=start_idx, sources=sources,
                   min_scale=min_scale, pos_rows=pos_rows, pos_cols=pos_cols,
-                  scale_steps=scale_steps)
+                  scale_steps=scale_steps, class_steps=class_steps,
+                  scale_min=scale_min, scale_max=scale_max)
 
         t0 = time.perf_counter()
-        pool_saved = synthesize_split("train", pool_count, progress_start=10, progress_end=90,
+        pool_saved = synthesize_split("train", pool_count, progress_start=10, progress_end=70,
                                       position_cells_logical=all_cells_logical, **kw)
         append_log(f"Pool: {pool_saved} image(s) in {format_duration(time.perf_counter() - t0)}.")
+
+        # Balance class counts: the per-class sweep leaves smaller objects under-
+        # represented (they drop out earlier). Generate EXTRA distinct images for
+        # each minority class — never duplicating files — until every class
+        # appears in the same number of images as the majority class.
+        class_counts = {
+            n: min(class_steps[n], scale_steps) * len(all_cells_logical) for n in names
+        }
+        balanced_counts = dict(class_counts)
+        if get_cfg("phase2", "balance_classes", default=True) and start_idx == 0:
+            target = max(class_counts.values())
+            deficits = {n: target - class_counts[n] for n in names if target - class_counts[n] > 0}
+            total_deficit = sum(deficits.values())
+            if total_deficit > 0:
+                append_log(
+                    f"Balancing minority classes up to {target} image(s) each "
+                    f"(+{total_deficit} extra unique image(s), no duplication): "
+                    + ", ".join(f"{n}+{d}" for n, d in deficits.items())
+                )
+                next_idx = pool_count
+                done = 0
+                for n, deficit in deficits.items():
+                    p0 = 70 + round(20 * done / total_deficit)
+                    p1 = 70 + round(20 * (done + deficit) / total_deficit)
+                    next_idx = synthesize_extra(
+                        "train", n, names.index(n), deficit, next_idx,
+                        bg_pool_per_class[n], rng, device, object_profiles.get(n),
+                        sources, scale_min, scale_max, progress_start=p0, progress_end=p1,
+                    )
+                    balanced_counts[n] = target
+                    done += deficit
+                append_log("Balanced per-class image counts: " +
+                           ", ".join(f"{n}={c}" for n, c in balanced_counts.items()))
 
         # Randomly move val_fraction of the generated pool into the validate split.
         set_job(stage="Splitting train/val", percent=92, message="Random train/val split")
@@ -1536,7 +1731,19 @@ def synthesize_dataset(images_per_class: int) -> None:
             "validate_count": val_saved,
             "test_count": test_saved,
             "placement_mode": placement_mode,
-            "objects_per_image": len(names),
+            "max_objects_per_image": len(names),
+            "class_reference_px": class_ref_px,
+            "class_scale_steps": class_steps,
+            "class_image_counts": class_counts,
+            "balanced_image_counts": balanced_counts,
+            "scale_range": [scale_min, scale_max],
+            "augmentation": {
+                "hflip_pct": get_cfg("phase2", "hflip_pct", default=50),
+                "rotate_max_deg": get_cfg("phase2", "rotate_max_deg", default=15),
+                "brightness_variation_pct": get_cfg("phase2", "brightness_variation_pct", default=10),
+                "contrast_variation_pct": get_cfg("phase2", "contrast_variation_pct", default=20),
+                "saturation": "off (colour cues preserved)",
+            },
             "elapsed": total_elapsed,
         }
         (DATA_DIR / "generation_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")

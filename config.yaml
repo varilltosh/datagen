@@ -9,11 +9,14 @@ phase1:
 phase2:
   blur_max_pct: 0
   brightness_variation_pct: 10
+  balance_classes: true
   contrast_variation_pct: 20
   grid_cols: 3
   grid_rows: 3
+  hflip_pct: 50
   max_objects_per_image: 15
   out_of_frame_pct: 10
+  rotate_max_deg: 15
   output_resolution:
   - '640'
   - '640'
@@ -21,6 +24,8 @@ phase2:
   placement_mode: random
   position_grid_cols: 6
   position_grid_rows: 6
+  scale_max: 1.0
+  scale_min: 0.166667
   start_idx: 0
   sweep_reference_px: 200
   test_pct: 0
