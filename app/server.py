@@ -99,6 +99,9 @@ _phase4_job: dict = {
 }
 _phase4_stop = threading.Event()
 
+ROS_MODEL_PATH = PROJECT_DIR / "best(1).pt"
+ROS_IMAGE_TOPIC = "/camera/camera/color/image_raw"
+
 
 # ── Config ───────────────────────────────────────────────────────────────────
 
@@ -2435,6 +2438,10 @@ def train_model() -> None:
         proj_rel = str(get_cfg("phase3", "project", default="runs/detect"))
         name     = str(get_cfg("phase3", "name",    default="train"))
         proj_abs = str(PROJECT_DIR / proj_rel)
+        # rect=True keeps the native 1280×720 aspect (padded to a 32-multiple,
+        # ~1280×736) instead of forcing a square imgsz×imgsz, so far/small
+        # objects keep their pixels without wasting compute on padding.
+        rect = bool(get_cfg("phase3", "rect", default=False))
 
         with phase3_lock:
             _phase3_job["total_epochs"] = epochs
@@ -2450,6 +2457,7 @@ def train_model() -> None:
             f"device={device}",
             f"project={proj_abs}",
             f"name={name}",
+            f"rect={rect}",
             "exist_ok=True",
         ]
         append_log(f"$ {' '.join(cmd)}")
@@ -2776,6 +2784,205 @@ def phase4_results():
     if not path.exists():
         return jsonify({"error": "Results CSV not found on disk."}), 404
     return send_file(str(path), as_attachment=True, download_name="video_evaluation.csv")
+
+
+# ── Phase 4: ROS live detection ───────────────────────────────────────────────
+
+_ros_job_lock = threading.Lock()
+_ros_job: dict = {
+    "running": False,
+    "stage": "Idle",
+    "frame": 0,
+    "results_count": 0,
+    "csv_path": None,
+    "error": None,
+    "last_detections": [],
+}
+_ros_stop = threading.Event()
+
+
+def snapshot_ros() -> dict:
+    with _ros_job_lock:
+        return dict(_ros_job)
+
+
+def run_ros_detection(model_path: Path) -> None:
+    import rclpy
+    from rclpy.node import Node
+    from sensor_msgs.msg import Image
+    from cv_bridge import CvBridge
+
+    _ros_stop.clear()
+    with _ros_job_lock:
+        _ros_job.update(
+            running=True, stage="Loading model", frame=0,
+            results_count=0, csv_path=None, error=None, last_detections=[],
+        )
+    set_job(running=True, stage="ROS Detection", percent=5,
+            message="Loading model…", error=None, log=[])
+
+    try:
+        from ultralytics import YOLO as _YOLO
+        model = _YOLO(str(model_path))
+    except Exception as exc:
+        err = f"Failed to load model: {exc}"
+        append_log(err)
+        with _ros_job_lock:
+            _ros_job.update(running=False, stage="Error", error=err)
+        set_job(running=False, stage="Error", error=err, message=err)
+        return
+
+    append_log(f"Model loaded: {model_path.name}")
+
+    PHASE4_DIR.mkdir(parents=True, exist_ok=True)
+    csv_path = PHASE4_DIR / "ros_detection.csv"
+
+    conf_threshold = float(get_cfg("phase4", "confidence_threshold", default=0.75))
+    bridge = CvBridge()
+    frame_count = 0
+    rows: list[dict] = []
+
+    try:
+        rclpy.init(args=None)
+    except Exception:
+        pass  # already initialized
+
+    class DetectorNode(Node):
+        def __init__(self):
+            super().__init__("skuba_detector")
+            self.subscription = self.create_subscription(
+                Image, ROS_IMAGE_TOPIC, self._callback, 10,
+            )
+            self._fcsv = open(csv_path, "w", newline="", encoding="utf-8")
+            fieldnames = ["frame", "timestamp", "class_name", "confidence", "x1", "y1", "x2", "y2"]
+            self._writer = csv.DictWriter(self._fcsv, fieldnames=fieldnames)
+            self._writer.writeheader()
+            self._frame = 0
+            self._rows: list[dict] = []
+
+        def _callback(self, msg: Image):
+            if _ros_stop.is_set():
+                return
+            try:
+                frame = bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+            except Exception as exc:
+                append_log(f"cv_bridge error: {exc}")
+                return
+
+            self._frame += 1
+            ts = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+            results = model(frame, verbose=False)
+            detections = []
+            for r in results:
+                if r.boxes is None:
+                    continue
+                for box in r.boxes:
+                    conf = float(box.conf[0])
+                    if conf < conf_threshold:
+                        continue
+                    cls_id = int(box.cls[0])
+                    cls_name = model.names.get(cls_id, str(cls_id))
+                    coords = [round(v, 1) for v in box.xyxy[0].tolist()]
+                    row = {
+                        "frame": self._frame,
+                        "timestamp": round(ts, 4),
+                        "class_name": cls_name,
+                        "confidence": round(conf, 4),
+                        "x1": coords[0], "y1": coords[1],
+                        "x2": coords[2], "y2": coords[3],
+                    }
+                    self._rows.append(row)
+                    self._writer.writerow(row)
+                    detections.append({"class_name": cls_name, "confidence": round(conf, 4),
+                                       "x1": coords[0], "y1": coords[1],
+                                       "x2": coords[2], "y2": coords[3]})
+
+            self._fcsv.flush()
+            with _ros_job_lock:
+                _ros_job["frame"] = self._frame
+                _ros_job["results_count"] = len(self._rows)
+                _ros_job["last_detections"] = detections
+            set_job(
+                stage=f"Live detection (frame {self._frame})",
+                percent=50,
+                message=f"Frame {self._frame} — {len(self._rows)} detection(s) total",
+            )
+
+        def shutdown(self):
+            self._fcsv.close()
+
+    node = DetectorNode()
+    append_log(f"Subscribed to {ROS_IMAGE_TOPIC} — streaming detections (conf≥{conf_threshold})")
+    with _ros_job_lock:
+        _ros_job.update(stage="Running", csv_path=str(csv_path))
+    set_job(stage="ROS Detection running", percent=20,
+            message=f"Listening on {ROS_IMAGE_TOPIC}…")
+
+    try:
+        while not _ros_stop.is_set():
+            rclpy.spin_once(node, timeout_sec=0.1)
+    except Exception as exc:
+        append_log(f"ROS spin error: {exc}")
+    finally:
+        node.shutdown()
+        node.destroy_node()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
+
+    with _ros_job_lock:
+        n = _ros_job["results_count"]
+        _ros_job.update(running=False, stage="Complete")
+    msg_done = f"ROS detection stopped — {n} detection(s) saved to {csv_path}"
+    append_log(msg_done)
+    set_job(running=False, stage="Complete", percent=100, message=msg_done)
+
+
+@app.post("/phase4/ros/start")
+def phase4_ros_start():
+    if snapshot_ros()["running"]:
+        return jsonify({"error": "ROS detection is already running."}), 409
+    if snapshot_job()["running"] or snapshot_phase3()["running"] or snapshot_phase4()["running"]:
+        return jsonify({"error": "Another job is already running."}), 409
+
+    model_file = request.files.get("model")
+    if model_file and model_file.filename:
+        PHASE4_DIR.mkdir(parents=True, exist_ok=True)
+        model_path = PHASE4_DIR / secure_filename(model_file.filename)
+        model_file.save(str(model_path))
+    elif ROS_MODEL_PATH.exists():
+        model_path = ROS_MODEL_PATH
+    else:
+        best = snapshot_phase3().get("best_pt")
+        if not best or not Path(best).exists():
+            return jsonify({"error": f"Model not found at {ROS_MODEL_PATH}. Train a model first or place best(1).pt in the project root."}), 400
+        model_path = Path(best)
+
+    threading.Thread(target=run_ros_detection, args=(model_path,), daemon=True).start()
+    return jsonify({"ok": True, "model": str(model_path), "topic": ROS_IMAGE_TOPIC})
+
+
+@app.post("/phase4/ros/stop")
+def phase4_ros_stop():
+    _ros_stop.set()
+    return jsonify({"ok": True})
+
+
+@app.get("/phase4/ros/status")
+def phase4_ros_status():
+    return jsonify(snapshot_ros())
+
+
+@app.get("/phase4/ros/results")
+def phase4_ros_results():
+    csv_p = snapshot_ros().get("csv_path")
+    if not csv_p:
+        return jsonify({"error": "No ROS detection results yet."}), 404
+    path = Path(csv_p)
+    if not path.exists():
+        return jsonify({"error": "Results CSV not found on disk."}), 404
+    return send_file(str(path), as_attachment=True, download_name="ros_detection.csv")
 
 
 @app.get("/api/health")

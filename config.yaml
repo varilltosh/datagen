@@ -7,16 +7,15 @@ phase1:
   expected_images_per_class: 108
   min_backgrounds_per_category: 15
 phase2:
+  balance_classes: 'true'
   blur_max_pct: 0
   brightness_variation_pct: 10
-  balance_classes: true
   contrast_variation_pct: 20
   grid_cols: 3
   grid_rows: 3
   hflip_pct: 50
   max_objects_per_image: 15
   out_of_frame_pct: 10
-  rotate_max_deg: 15
   output_resolution:
   - '640'
   - '640'
@@ -24,7 +23,8 @@ phase2:
   placement_mode: random
   position_grid_cols: 6
   position_grid_rows: 6
-  scale_max: 1.0
+  rotate_max_deg: 15
+  scale_max: 1
   scale_min: 0.166667
   start_idx: 0
   sweep_reference_px: 200
@@ -32,12 +32,13 @@ phase2:
   train_pct: 60
   val_pct: 40
 phase3:
-  batch: 8
+  batch: 4
   cls_loss_acceptable: 0.2
   cls_loss_excellent: 0.01
   device: '0'
-  epochs: 100
-  imgsz: 640
+  epochs: 50
+  imgsz: 1280
+  rect: true
   model: models/yolov8s.pt
   name: train
   patience: 10
