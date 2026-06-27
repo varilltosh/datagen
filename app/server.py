@@ -30,6 +30,7 @@ VIDEO_DIR = PROJECT_DIR / "workspace" / "input"
 IMAGE_DIR = PROJECT_DIR / "workspace" / "frames"
 MASK_DIR = PROJECT_DIR / "workspace" / "masks"
 REMBG_DIR = PROJECT_DIR / "workspace" / "cutouts"
+DISTRACTOR_CUTOUT_DIR = PROJECT_DIR / "workspace" / "cutouts_distractor"
 BG_DIR = PROJECT_DIR / "assets" / "backgrounds"
 DATA_DIR = PROJECT_DIR / "workspace" / "data"
 PHASE1_DIR = DATA_DIR / "phase1"
@@ -1300,6 +1301,78 @@ def cells_to_pixels(
     return [(c * cw, r * ch, cw, ch) for (r, c) in logical_cells]
 
 
+def jitter_background_hsv(background: np.ndarray, rng: random.Random) -> np.ndarray:
+    """Wide random hue/saturation + clamped brightness jitter on a BACKGROUND
+    image only. Applied before any object is pasted, so target objects keep
+    their original colour cues (class colour is preserved) while the scene
+    lighting/colour varies — closing the sim-to-real gap and stopping the model
+    keying on background colour. Brightness is clamped to ×0.4–1.6 to avoid
+    degenerate pure-black/white frames."""
+    hsv = cv2.cvtColor(background, cv2.COLOR_BGR2HSV).astype(np.float32)
+    hue_shift = rng.uniform(0, 180)
+    sat_scale = rng.uniform(0.0, 2.0)
+    val_scale = rng.uniform(0.4, 1.6)
+    hsv[..., 0] = (hsv[..., 0] + hue_shift) % 180.0
+    hsv[..., 1] = np.clip(hsv[..., 1] * sat_scale, 0, 255)
+    hsv[..., 2] = np.clip(hsv[..., 2] * val_scale, 0, 255)
+    return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+
+
+def paste_distractors_preview(image: np.ndarray, rng: random.Random,
+                              min_objs: int = 1, max_objs: int = 3) -> int:
+    """Paste a few hard-negative distractor cutouts (HSV-jittered + rotated ±15°)
+    onto `image` in place, mirroring scripts/make_hard_negatives.py, so the
+    Phase-2 preview shows what hard negatives look like. Returns how many were
+    pasted (0 if no distractor cutouts exist yet)."""
+    cutouts = [
+        p for p in DISTRACTOR_CUTOUT_DIR.rglob("*")
+        if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
+    ] if DISTRACTOR_CUTOUT_DIR.exists() else []
+    if not cutouts:
+        return 0
+    ch, cw = image.shape[:2]
+    pasted = 0
+    for _ in range(rng.randint(min_objs, max_objs)):
+        raw = cv2.imread(str(rng.choice(cutouts)), cv2.IMREAD_UNCHANGED)
+        if raw is None or raw.ndim != 3 or raw.shape[2] != 4:
+            continue
+        bgr, alpha = raw[:, :, :3], raw[:, :, 3]
+        ys, xs = np.where(alpha > 0)
+        if ys.size == 0:
+            continue
+        bgr = bgr[ys.min():ys.max() + 1, xs.min():xs.max() + 1].copy()
+        alpha = alpha[ys.min():ys.max() + 1, xs.min():xs.max() + 1].copy()
+        bgr = jitter_background_hsv(bgr, rng)
+        # rotate ±15° (expand canvas, keep alpha in sync)
+        angle = rng.uniform(-15.0, 15.0)
+        h, w = bgr.shape[:2]
+        m = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), angle, 1.0)
+        cos, sin = abs(m[0, 0]), abs(m[0, 1])
+        nw, nh = int(round(h * sin + w * cos)), int(round(h * cos + w * sin))
+        m[0, 2] += nw / 2.0 - w / 2.0
+        m[1, 2] += nh / 2.0 - h / 2.0
+        bgr = cv2.warpAffine(bgr, m, (nw, nh), flags=cv2.INTER_LINEAR, borderValue=0)
+        alpha = cv2.warpAffine(alpha, m, (nw, nh), flags=cv2.INTER_NEAREST, borderValue=0)
+        # random size 8–45% of canvas width
+        target_w = rng.uniform(0.08, 0.45) * cw
+        scale = target_w / max(nw, nh)
+        rw, rh = max(8, int(nw * scale)), max(8, int(nh * scale))
+        bgr = cv2.resize(bgr, (rw, rh), interpolation=cv2.INTER_AREA)
+        alpha = cv2.resize(alpha, (rw, rh), interpolation=cv2.INTER_NEAREST)
+        x = rng.randint(int(-0.3 * rw), int(cw - 0.7 * rw))
+        y = rng.randint(int(-0.3 * rh), int(ch - 0.7 * rh))
+        x1, y1 = max(0, x), max(0, y)
+        x2, y2 = min(cw, x + rw), min(ch, y + rh)
+        if x2 <= x1 or y2 <= y1:
+            continue
+        sx, sy = x1 - x, y1 - y
+        obj = bgr[sy:sy + (y2 - y1), sx:sx + (x2 - x1)]
+        a = alpha[sy:sy + (y2 - y1), sx:sx + (x2 - x1)] > 0
+        image[y1:y2, x1:x2][a] = obj[a]
+        pasted += 1
+    return pasted
+
+
 def sweep_scale(index: int, count: int, min_scale: float) -> float:
     """Scale for image `index` of `count`, stepping evenly from 1.0 (close /
     largest) down to `min_scale` (far / smallest)."""
@@ -1371,6 +1444,8 @@ def synthesize_split(
         background = cv2.imread(str(background_path), cv2.IMREAD_COLOR)
         if background is None:
             continue
+        if get_cfg("phase2", "bg_hsv_jitter", default=True):
+            background = jitter_background_hsv(background, rng)
         canvas = canvas_from_background(background, device)
         canvas_h, canvas_w = canvas_shape(canvas)
 
@@ -1522,6 +1597,8 @@ def synthesize_extra(
         background = cv2.imread(str(rng.choice(bg_pool)), cv2.IMREAD_COLOR)
         if background is None:
             continue
+        if get_cfg("phase2", "bg_hsv_jitter", default=True):
+            background = jitter_background_hsv(background, rng)
         canvas = canvas_from_background(background, device)
         object_pair = rng.choice(sources[class_name])
         loaded = load_object(*object_pair, device, rng, object_profile)
@@ -1884,6 +1961,8 @@ def phase2_preview():
         background = cv2.imread(str(rng.choice(preview_bg_pool)), cv2.IMREAD_COLOR)
         if background is None:
             return jsonify({"error": "Could not read background image."}), 500
+        if get_cfg("phase2", "bg_hsv_jitter", default=True):
+            background = jitter_background_hsv(background, rng)
         canvas = canvas_from_background(background, device)
         canvas_h, canvas_w = canvas_shape(canvas)
 
@@ -1916,7 +1995,9 @@ def phase2_preview():
 
         if len(occupied_boxes) != len(names):
             return jsonify({"error": "Could not place one object for every class without overlap. Try smaller object sizes or grid placement."}), 500
-        ok, buf = cv2.imencode(".jpg", canvas_to_image(canvas), [cv2.IMWRITE_JPEG_QUALITY, 85])
+        preview_img = canvas_to_image(canvas)
+        paste_distractors_preview(preview_img, rng)
+        ok, buf = cv2.imencode(".jpg", preview_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
         if not ok:
             return jsonify({"error": "Failed to encode preview image."}), 500
         return jsonify({"image_b64": base64.b64encode(buf.tobytes()).decode("utf-8"),

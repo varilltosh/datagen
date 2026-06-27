@@ -70,15 +70,40 @@ def load_cutout(path: Path) -> tuple[np.ndarray, np.ndarray] | None:
 
 
 def jitter_hsv(bgr: np.ndarray, rng: random.Random) -> np.ndarray:
-    """Random hue shift + saturation + brightness/value scaling."""
+    """Wide random hue/saturation jitter + clamped brightness scaling.
+
+    Hue is shifted across the full ring and saturation spans grayscale→vivid
+    (both fully realistic). Brightness/value is intentionally clamped to
+    ×0.4–1.6 so we never produce degenerate pure-black/pure-white samples that
+    teach the model nothing."""
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV).astype(np.float32)
-    hue_shift = rng.uniform(-15, 15)            # degrees on the 0-179 OpenCV hue ring
-    sat_scale = rng.uniform(0.5, 1.5)
-    val_scale = rng.uniform(0.5, 1.4)
+    hue_shift = rng.uniform(0, 180)             # full ring
+    sat_scale = rng.uniform(0.0, 2.0)           # grayscale → vivid
+    val_scale = rng.uniform(0.4, 1.6)           # clamped: dark room → bright sun
     hsv[..., 0] = (hsv[..., 0] + hue_shift) % 180.0
     hsv[..., 1] = np.clip(hsv[..., 1] * sat_scale, 0, 255)
     hsv[..., 2] = np.clip(hsv[..., 2] * val_scale, 0, 255)
     return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+
+
+def rotate(bgr: np.ndarray, alpha: np.ndarray, rng: random.Random,
+           max_deg: float = 15.0) -> tuple[np.ndarray, np.ndarray]:
+    """Rotate object + alpha together by ±max_deg, expanding the canvas so no
+    corners are clipped."""
+    angle = rng.uniform(-max_deg, max_deg)
+    if abs(angle) < 0.1:
+        return bgr, alpha
+    h, w = bgr.shape[:2]
+    cx, cy = w / 2.0, h / 2.0
+    m = cv2.getRotationMatrix2D((cx, cy), angle, 1.0)
+    cos, sin = abs(m[0, 0]), abs(m[0, 1])
+    new_w = int(round(h * sin + w * cos))
+    new_h = int(round(h * cos + w * sin))
+    m[0, 2] += new_w / 2.0 - cx
+    m[1, 2] += new_h / 2.0 - cy
+    bgr_r = cv2.warpAffine(bgr, m, (new_w, new_h), flags=cv2.INTER_LINEAR, borderValue=0)
+    alpha_r = cv2.warpAffine(alpha, m, (new_w, new_h), flags=cv2.INTER_NEAREST, borderValue=0)
+    return bgr_r, alpha_r
 
 
 def paste(canvas: np.ndarray, bgr: np.ndarray, alpha: np.ndarray,
@@ -147,13 +172,14 @@ def main() -> int:
         bg = cv2.imread(str(rng.choice(backgrounds)), cv2.IMREAD_COLOR)
         if bg is None:
             continue
-        canvas = bg.copy()
+        canvas = jitter_hsv(bg, rng)            # randomize the background too
         ch, cw = canvas.shape[:2]
 
         n_objs = rng.randint(args.min_objs, args.max_objs)
         for _ in range(n_objs):
             bgr, alpha = rng.choice(loaded)
             bgr = jitter_hsv(bgr, rng)
+            bgr, alpha = rotate(bgr, alpha, rng, max_deg=15.0)
             oh, ow = bgr.shape[:2]
             target_w = rng.uniform(args.min_scale, args.max_scale) * cw
             scale = target_w / max(ow, oh)
