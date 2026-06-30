@@ -17,32 +17,32 @@ phase2:
   max_objects_per_image: 15
   out_of_frame_pct: 10
   output_resolution:
-  - '640'
-  - '640'
+  - '1280'
+  - '720'
   overlap_threshold_pct: 20
   placement_mode: random
   position_grid_cols: 6
   position_grid_rows: 6
   rotate_max_deg: 15
   scale_max: 1
-  scale_min: 0.166667
+  scale_min: 0.1
   start_idx: 0
   sweep_reference_px: 200
   test_pct: 0
   train_pct: 60
   val_pct: 40
 phase3:
-  batch: 4
+  batch: 8
   cls_loss_acceptable: 0.2
   cls_loss_excellent: 0.01
   device: '0'
   epochs: 50
   imgsz: 1280
-  rect: true
   model: models/yolov8s.pt
   name: train
   patience: 10
   project: runs/detect
+  rect: 'true'
   tune_epochs: 0
   tune_iterations: 0
 phase4:

@@ -30,7 +30,9 @@ VIDEO_DIR = PROJECT_DIR / "workspace" / "input"
 IMAGE_DIR = PROJECT_DIR / "workspace" / "frames"
 MASK_DIR = PROJECT_DIR / "workspace" / "masks"
 REMBG_DIR = PROJECT_DIR / "workspace" / "cutouts"
+DISTRACTOR_DIR = PROJECT_DIR / "distractor"
 DISTRACTOR_CUTOUT_DIR = PROJECT_DIR / "workspace" / "cutouts_distractor"
+DISTRACTOR_MASK_DIR = PROJECT_DIR / "mask_distractor"
 BG_DIR = PROJECT_DIR / "assets" / "backgrounds"
 DATA_DIR = PROJECT_DIR / "workspace" / "data"
 PHASE1_DIR = DATA_DIR / "phase1"
@@ -1321,15 +1323,19 @@ def jitter_background_hsv(background: np.ndarray, rng: random.Random) -> np.ndar
 def paste_distractors_preview(image: np.ndarray, rng: random.Random,
                               min_objs: int = 1, max_objs: int = 3) -> int:
     """Paste a few hard-negative distractor cutouts (HSV-jittered + rotated ±15°)
-    onto `image` in place, mirroring scripts/make_hard_negatives.py, so the
-    Phase-2 preview shows what hard negatives look like. Returns how many were
-    pasted (0 if no distractor cutouts exist yet)."""
+    onto `image` in place, mirroring scripts/make_hard_negatives.py. Used both by
+    the Phase-2 preview and the real synthesis: distractors are pasted onto the
+    BACKGROUND, then the labelled target objects are placed on top, so a
+    distractor can sit beside / partially behind a target but never occludes one.
+    Distractors carry no label, so the model learns they are background. Returns
+    how many were pasted (0 if no distractor cutouts exist yet)."""
     cutouts = [
         p for p in DISTRACTOR_CUTOUT_DIR.rglob("*")
         if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
     ] if DISTRACTOR_CUTOUT_DIR.exists() else []
     if not cutouts:
         return 0
+
     ch, cw = image.shape[:2]
     pasted = 0
     for _ in range(rng.randint(min_objs, max_objs)):
@@ -1446,6 +1452,11 @@ def synthesize_split(
             continue
         if get_cfg("phase2", "bg_hsv_jitter", default=True):
             background = jitter_background_hsv(background, rng)
+        # Hard-negative distractors are pasted onto the BACKGROUND first; the real
+        # target objects are then placed on top (below), so distractors can sit
+        # adjacent to / partially behind a target but never occlude it. They carry
+        # no label, so the model learns they are background.
+        paste_distractors_preview(background, rng)
         canvas = canvas_from_background(background, device)
         canvas_h, canvas_w = canvas_shape(canvas)
 
@@ -1599,6 +1610,8 @@ def synthesize_extra(
             continue
         if get_cfg("phase2", "bg_hsv_jitter", default=True):
             background = jitter_background_hsv(background, rng)
+        # Distractors on the background first, real object pasted on top (below).
+        paste_distractors_preview(background, rng)
         canvas = canvas_from_background(background, device)
         object_pair = rng.choice(sources[class_name])
         loaded = load_object(*object_pair, device, rng, object_profile)
@@ -1649,12 +1662,54 @@ def random_split_train_val(val_fraction: float, rng: random.Random) -> tuple[int
     return len(stems) - n_val, n_val
 
 
+def ensure_distractor_cutouts() -> int:
+    """Make sure every image in distractor/ has an RGBA cutout in
+    workspace/cutouts_distractor/ (the hard-negative source for synthesis).
+
+    Runs rembg only when something is missing/stale — if every distractor
+    already has a matching cutout we skip the slow background-removal step.
+    Returns the number of cutouts available afterwards (0 if distractor/ is
+    empty, in which case synthesis simply produces no hard negatives)."""
+    sources = image_files(DISTRACTOR_DIR) if DISTRACTOR_DIR.exists() else []
+    if not sources:
+        append_log("Hard negatives: distractor/ is empty — synthesizing without distractors.")
+        return 0
+    existing = {p.stem for p in DISTRACTOR_CUTOUT_DIR.glob("*.png")} if DISTRACTOR_CUTOUT_DIR.exists() else set()
+    missing = [p for p in sources if p.stem not in existing]
+    if not missing:
+        append_log(f"Hard negatives: {len(existing)} distractor cutout(s) already present.")
+        return len(existing)
+
+    append_log(f"Hard negatives: removing background from {len(missing)} new distractor image(s) (rembg)…")
+    set_job(stage="Preparing hard negatives", percent=6,
+            message=f"rembg on {len(missing)} distractor image(s)")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    cmd = [
+        sys.executable, str(REMBG_SCRIPT),
+        "--input", str(DISTRACTOR_DIR),
+        "--output", str(DISTRACTOR_CUTOUT_DIR),
+        "--mask-output", str(DISTRACTOR_MASK_DIR),
+        "--device", device,
+    ]
+    try:
+        subprocess.run(cmd, cwd=PROJECT_DIR, check=True)
+    except subprocess.CalledProcessError as exc:
+        append_log(f"Hard negatives: rembg failed ({exc}); continuing without new distractor cutouts.")
+    count = len({p.stem for p in DISTRACTOR_CUTOUT_DIR.glob("*.png")}) if DISTRACTOR_CUTOUT_DIR.exists() else 0
+    append_log(f"Hard negatives: {count} distractor cutout(s) ready.")
+    return count
+
+
 def synthesize_dataset(images_per_class: int) -> None:
     total_started_at = time.perf_counter()
     try:
         set_job(running=True, stage="Synthesizing", percent=5,
                 message="Preparing synthesized dataset", error=None, log=[])
         ensure_dirs()
+
+        # Make hard-negative distractor cutouts available before synthesis so a
+        # single "Synthesize" click runs the whole pipeline (rembg → composite).
+        ensure_distractor_cutouts()
 
         names = sorted(
             d.name for d in PHASE1_DIR.iterdir()
@@ -1963,6 +2018,9 @@ def phase2_preview():
             return jsonify({"error": "Could not read background image."}), 500
         if get_cfg("phase2", "bg_hsv_jitter", default=True):
             background = jitter_background_hsv(background, rng)
+        # Distractors on the background first, target objects on top — identical
+        # to the real synthesis pipeline so the preview reflects the dataset.
+        paste_distractors_preview(background, rng)
         canvas = canvas_from_background(background, device)
         canvas_h, canvas_w = canvas_shape(canvas)
 
@@ -1996,7 +2054,6 @@ def phase2_preview():
         if len(occupied_boxes) != len(names):
             return jsonify({"error": "Could not place one object for every class without overlap. Try smaller object sizes or grid placement."}), 500
         preview_img = canvas_to_image(canvas)
-        paste_distractors_preview(preview_img, rng)
         ok, buf = cv2.imencode(".jpg", preview_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
         if not ok:
             return jsonify({"error": "Failed to encode preview image."}), 500
